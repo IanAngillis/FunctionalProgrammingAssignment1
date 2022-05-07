@@ -42,8 +42,11 @@ instance Doodle MyDoodle where
 
 newtype MyPool k t = MyPool (Map.Map k t)
 
-emptyPool :: MyPool Int (MyDoodle Int)
+emptyPool :: MyPool Int (MyDoodle LocalTime)
 emptyPool = MyPool Map.empty
+
+emptyIntPool::MyPool Int (MyDoodle Int)
+emptyIntPool = MyPool Map.empty
 
 --instance Pool (MyPool k t) where
 --    freshKey
@@ -62,7 +65,7 @@ instance Pool MyPool where
     get k       (MyPool pool) =  Map.lookup k pool
 
 newKey :: (Enum a1, Ord a1) => Map.Map a1 a2 -> a1
-newKey pool = succ $ maximum $ Map.keys pool
+newKey pool = if length (Map.keys pool) == 0 then 0 else succ $ maximum $ Map.keys pool
 
 
 doesNotOverlap::Ord t =>t -> t -> t -> t -> Bool
