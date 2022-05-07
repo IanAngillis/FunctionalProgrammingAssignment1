@@ -4,12 +4,9 @@ import qualified Data.Map as Map
 import Data.Time.LocalTime
 import Data.Time (UTCTime)
 
--- Type synonyms to increase readability
 type Title = String
 type Participants = [String]
 
--- New data types
--- t is timezone
 data Timeslot t = Timeslot t t [String]
 data MyDoodle t = MyDoodle Title [Timeslot t]
 
@@ -25,16 +22,28 @@ instance Ord ZonedTime where
 
 
 instance Show t => Show (MyDoodle t) where
-    show (MyDoodle title timeslots) = "------------------------------" ++ "\n" ++ show title ++ "\n" ++ showSlots timeslots ++ "\n"
+    show (MyDoodle title timeslots) = if null timeslots then "+" ++ createDashedLine width ++ "+" ++ "\n| " ++ show title ++ "|\n+" ++ createDashedLine width ++ "+" else "+" ++ createDashedLine width ++ "+" ++ "\n| " ++ show title ++ "|\n+" ++ createDashedLine width ++ "+"  ++ showSlots timeslots
         where
-        showSlots [] = ""
-        showSlots (x:xs) = "\n" ++ show x ++ showSlots xs
+        width = length title + 2
+        slotWidth = longestTimeslotLength timeslots - 4
+        showSlots [] = "\n+" ++ createDashedLine slotWidth ++ "+"
+        showSlots (x:xs) = "\n" ++ "+" ++ createDashedLine slotWidth ++ "+" ++ show x ++ showSlots xs
 
 
 instance Show t => Show (Timeslot t) where
     show (Timeslot s e participants) = "\n| " ++ show s ++ " | " ++ show e ++  " | "  ++ showParticipants participants ++ " |"
         where   showParticipants [] = ""
                 showParticipants (x:xs) = " " ++ show x ++ showParticipants xs
+
+longestTimeslotLength::(Show t) => [Timeslot t] -> Int
+longestTimeslotLength [] = 0
+longestTimeslotLength timeslots = maximum $ map (length . show) timeslots
+
+createDashedLine::(Ord t, Num t) => t -> [Char]
+createDashedLine n
+    | n <= 0     = "-"
+    | otherwise = "-" ++ createDashedLine (n-1)
+
 
 instance Doodle MyDoodle where
     --Create an empty doodle with a given title
@@ -54,13 +63,6 @@ instance Doodle MyDoodle where
 
 newtype MyPool k t = MyPool (Map.Map k t)
 
-
-
---instance Pool (MyPool k t) where
---    freshKey
-
--- Functions to access and de-acces the pool
--- Unnessecary??
 unwrap::MyPool k t -> Map.Map k t
 unwrap (MyPool m) = m
 
@@ -72,20 +74,17 @@ instance Pool MyPool where
     set k v     (MyPool pool) = MyPool (Map.insert k v pool)
     get k       (MyPool pool) =  Map.lookup k pool
 
---newKey :: (Enum a1, Ord a1) => Map.Map a1 a2 -> a1
---newKey pool = if null (Map.keys pool) then 0 else succ $ maximum $ Map.keys pool
 
--- expects an ascending ordered list
--- expects an ascending ordered list
+--- expects an ascending ordered list
 newKey :: (Ord k, Enum k) => [k] -> k
-newKey = toEnum . (newKey' 0) . map fromEnum 
+newKey = toEnum . newKey' 0 . map fromEnum 
   where
     newKey' :: Int -> [Int] -> Int
     newKey' keylow []         = keylow
     newKey' keylow (keyhigh : keys)
          |  keylow /= keyhigh = keylow
          |  otherwise         = newKey' (keylow + 1) keys
-         
+
 doesNotOverlap::Ord t =>t -> t -> t -> t -> Bool
 doesNotOverlap s1 e1 s2 e2 = (s1 < s2 && e1 <= s2) ||  (s1 >= e2 && e1 > e2)
 
@@ -106,31 +105,10 @@ toggleParticipant participant (x : xs)
     | participant == x = xs
     | otherwise = x : toggleParticipant participant xs
 
-
-
--- Testing variables
-x = MyDoodle "Christmas Part!" []
-x' = add (2, 3) x
-x'' = add (1, 2) x'
-x''' = add (3, 4) x''
-y = remove 0 x'''
-y' = toggle "Alice" 0 y
-y'' = toggle "Alice" 0 y'
-
--- Just (Left ("2022-12-25T12:00+01:00", "2022-12-25T17:00+01:00"))
--- Just (Left ("2022-12-24T18:00+01:00", "2022-12-25T00:00+01:00"))
-
 emptyPool :: MyPool Int (MyDoodle ZonedTime)
 emptyPool = MyPool Map.empty
 
-emptyIntPool::MyPool Int (MyDoodle Int)
-emptyIntPool = MyPool Map.empty
-
-emptyUCTPool :: MyPool Int(MyDoodle ZonedTime)
-emptyUCTPool = MyPool Map.empty 
-
 main = run emptyPool
-
 
 --Just(Right(2022-12-25 16:00:00 +01:00, 2022-12-25 18:00:00 +01:00))
 
