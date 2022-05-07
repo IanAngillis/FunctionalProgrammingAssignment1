@@ -55,12 +55,6 @@ instance Doodle MyDoodle where
 
 newtype MyPool k t = MyPool (Map.Map k t)
 
-unwrap::MyPool k t -> Map.Map k t
-unwrap (MyPool m) = m
-
-wrap::Map.Map k t -> MyPool k t
-wrap  = MyPool
-
 instance Pool MyPool where
     freshKey    (MyPool pool) = newKey $ Map.keys pool
     set k v     (MyPool pool) = MyPool (Map.insert k v pool)
