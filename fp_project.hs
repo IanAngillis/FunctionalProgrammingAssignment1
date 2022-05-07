@@ -25,6 +25,8 @@ instance Doodle MyDoodle where
     -- toggle a name to the timeslot (add/remove)
     toggle name idx (MyDoodle title timeslots) = MyDoodle title timeslots
 
+
+
 -- Hulp functions
 removeIndex::Int -> [a] -> [a]
 removeIndex _ [] = []
