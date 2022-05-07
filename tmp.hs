@@ -2,6 +2,7 @@ import Doodle
 import Data.List
 import qualified Data.Map as Map
 import Data.Time.LocalTime
+import Data.Time (UTCTime)
 
 -- Type synonyms to increase readability
 type Title = String
@@ -11,6 +12,17 @@ type Participants = [String]
 -- t is timezone
 data Timeslot t = Timeslot t t [String]
 data MyDoodle t = MyDoodle Title [Timeslot t]
+
+instance Eq ZonedTime where
+    x == y  = zonedTimeToUTC x == zonedTimeToUTC y
+
+instance Ord ZonedTime where
+    compare x y = zonedTimeToUTC x `compare` zonedTimeToUTC y
+    x <= y  = zonedTimeToUTC x <= zonedTimeToUTC y
+    x < y   = zonedTimeToUTC x < zonedTimeToUTC y
+    x > y   = zonedTimeToUTC x > zonedTimeToUTC y
+    x >= y  = zonedTimeToUTC x >= zonedTimeToUTC y
+
 
 instance Show t => Show (MyDoodle t) where
     show (MyDoodle title timeslots) = "------------------------------" ++ "\n" ++ show title ++ "\n" ++ showSlots timeslots ++ "\n"
@@ -42,11 +54,7 @@ instance Doodle MyDoodle where
 
 newtype MyPool k t = MyPool (Map.Map k t)
 
-emptyPool :: MyPool Int (MyDoodle LocalTime)
-emptyPool = MyPool Map.empty
 
-emptyIntPool::MyPool Int (MyDoodle Int)
-emptyIntPool = MyPool Map.empty
 
 --instance Pool (MyPool k t) where
 --    freshKey
@@ -60,14 +68,24 @@ wrap::Map.Map k t -> MyPool k t
 wrap  = MyPool
 
 instance Pool MyPool where
-    freshKey    (MyPool pool) = newKey pool
+    freshKey    (MyPool pool) = newKey $ Map.keys pool
     set k v     (MyPool pool) = MyPool (Map.insert k v pool)
     get k       (MyPool pool) =  Map.lookup k pool
 
-newKey :: (Enum a1, Ord a1) => Map.Map a1 a2 -> a1
-newKey pool = if length (Map.keys pool) == 0 then 0 else succ $ maximum $ Map.keys pool
+--newKey :: (Enum a1, Ord a1) => Map.Map a1 a2 -> a1
+--newKey pool = if null (Map.keys pool) then 0 else succ $ maximum $ Map.keys pool
 
-
+-- expects an ascending ordered list
+-- expects an ascending ordered list
+newKey :: (Ord k, Enum k) => [k] -> k
+newKey = toEnum . (newKey' 0) . map fromEnum 
+  where
+    newKey' :: Int -> [Int] -> Int
+    newKey' keylow []         = keylow
+    newKey' keylow (keyhigh : keys)
+         |  keylow /= keyhigh = keylow
+         |  otherwise         = newKey' (keylow + 1) keys
+         
 doesNotOverlap::Ord t =>t -> t -> t -> t -> Bool
 doesNotOverlap s1 e1 s2 e2 = (s1 < s2 && e1 <= s2) ||  (s1 >= e2 && e1 > e2)
 
@@ -101,4 +119,18 @@ y'' = toggle "Alice" 0 y'
 
 -- Just (Left ("2022-12-25T12:00+01:00", "2022-12-25T17:00+01:00"))
 -- Just (Left ("2022-12-24T18:00+01:00", "2022-12-25T00:00+01:00"))
+
+emptyPool :: MyPool Int (MyDoodle ZonedTime)
+emptyPool = MyPool Map.empty
+
+emptyIntPool::MyPool Int (MyDoodle Int)
+emptyIntPool = MyPool Map.empty
+
+emptyUCTPool :: MyPool Int(MyDoodle ZonedTime)
+emptyUCTPool = MyPool Map.empty 
+
+main = run emptyPool
+
+
+--Just(Right(2022-12-25 16:00:00 +01:00, 2022-12-25 18:00:00 +01:00))
 
