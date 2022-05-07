@@ -46,17 +46,9 @@ createDashedLine n
 
 
 instance Doodle MyDoodle where
-    --Create an empty doodle with a given title
     initialize title = MyDoodle title []
-
-    -- Add a timeslot to the doodle 
-    add (start, end) doodle@(MyDoodle title participants) =
-        if all (\(Timeslot s2 e2 participants) -> doesNotOverlap s2 e2 start end) participants then  MyDoodle title (Timeslot start end [] : participants) else doodle
-
-    -- Remove a timeslot from the doodle
+    add (start, end) doodle@(MyDoodle title participants) = if all (\(Timeslot s2 e2 participants) -> doesNotOverlap s2 e2 start end) participants then  MyDoodle title (Timeslot start end [] : participants) else doodle
     remove idx (MyDoodle title timeslots) = MyDoodle title $ removeIndex idx timeslots
-
-    -- Toggle a name to a timeslot
     toggle name idx (MyDoodle title timeslots) = MyDoodle title $ updateTimeslot name toggleParticipant idx timeslots
 
 
@@ -76,14 +68,8 @@ instance Pool MyPool where
 
 
 --- expects an ascending ordered list
-newKey :: (Ord k, Enum k) => [k] -> k
-newKey = toEnum . newKey' 0 . map fromEnum 
-  where
-    newKey' :: Int -> [Int] -> Int
-    newKey' keylow []         = keylow
-    newKey' keylow (keyhigh : keys)
-         |  keylow /= keyhigh = keylow
-         |  otherwise         = newKey' (keylow + 1) keys
+newKey:: (Ord k, Enum k) => [k] -> k
+newKey keys = if null keys then toEnum 0 else succ $ last keys
 
 doesNotOverlap::Ord t =>t -> t -> t -> t -> Bool
 doesNotOverlap s1 e1 s2 e2 = (s1 < s2 && e1 <= s2) ||  (s1 >= e2 && e1 > e2)
@@ -110,5 +96,5 @@ emptyPool = MyPool Map.empty
 
 main = run emptyPool
 
+-- some example input
 --Just(Right(2022-12-25 16:00:00 +01:00, 2022-12-25 18:00:00 +01:00))
-
