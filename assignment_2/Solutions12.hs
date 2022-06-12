@@ -19,7 +19,8 @@ import System.Random
 
 import Text.Parsec hiding (State, token)
 import Text.Parsec.String
-import Text.Parsec
+import Text.Parsec.Char
+
 
 main = mainPhilosopher
 
@@ -128,6 +129,13 @@ x <:> xs = (:) <$> x <*> xs
 
 number = many1 digit
 
+
+
+word :: Parser String
+word = many1 letter
+
+
+
 negative = char '-' <:> number
 
 int :: Parser String
@@ -140,20 +148,28 @@ float = do
   e <- option "" $ oneOf "eE" <:> int
   return . read $ w ++ d ++ e
 
-parseRequest::Parser String
-parseRequest = try addTeacherRequest <|> try addStudentRequest
+words'::Parser String
+words' = do
+  w1 <- word
+  return . read w1
+--parseRequest::Parser String
+--parseRequest = try addTeacherRequest <|> try addStudentRequest
 
-addTeacherRequest::Parser String
-addTeacherRequest = string "add-teacher"
+--addTeacherRequest::Parser String
+--addTeacherRequest = do
+--  ss <- keyword "add-teacher"
+--  tt <- word
+--  return (ss ++ " " ++tt)
 
-addStudentRequest::Parser String
-addStudentRequest = string "add-student"
+--addStudentRequest::Parser String
+--addStudentRequest = string "add-student"
 
+--word::Parser Char -> Parser String
+--word = token . many1 letter
 
-
-request::Parser String
-request = do
-   parseRequest
+--request::Parser String
+--request = do
+--   parseRequest
 
 -- Some helpers for exercise 4.
 token :: Parser a -> Parser a
@@ -384,4 +400,6 @@ mainPhilosopher = do
   getLine
   return ()
 
+
+test p = parse p ""
 

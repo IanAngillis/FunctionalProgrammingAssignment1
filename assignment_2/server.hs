@@ -10,6 +10,7 @@ import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
 import Text.Parsec hiding (State, token)
 import Text.Parsec.String
+import Text.Read (Lexeme(String))
 
 -- Code is modified from starting point at https://hackage.haskell.org/package/network-3.1.2.7/docs/Network-Socket.html
 main :: IO ()
@@ -20,7 +21,7 @@ main = runTCPServer Nothing "3000" talk
         forkIO (handleRequest msg s) -- Handles it in a seperate thread
         talk s
 
-handleRequest msg s = do 
+handleRequest msg s = do
         unless (S.null msg) $ do
           print msg
           sendAll s msg
@@ -57,58 +58,83 @@ runTCPServer mhost port server = withSocketsDo $ do
 type Username = String
 type Password = String
 
-data Request = AddTeacherRequest Username Password String           
-                | AddStudentRequest Username Password String        
-                | ChangePasswordRequest Username Password String    
-                | SetDoodleRequest Username Password                
-                | GetDoodleRequest Username Password                
-                | SubscribeRequest Username Password                
-                | PreferRequest Username Password                   
+data Request =  AddTeacherRequest String String String
+                | AddStudentRequest Username Password String
+                | ChangePasswordRequest Username Password String
+                | SetDoodleRequest Username Password
+                | GetDoodleRequest Username Password
+                | SubscribeRequest Username Password
+                | PreferRequest Username Password
                 | ExamScheduleRequest                               deriving (Show)
 
+
+-- Helper functions, taken from Solutions12.hs from the WPO. They take care of whitespaces
+
+
+
+token :: Parser a -> Parser a
+token p = try $ spaces >> p
+
+keyword :: String -> Parser String
+keyword = token . string
+
+symbol = keyword
+
+
+
+
 -- add-teacher parser
-addTeacherRequestParser::Parser String
-addTeacherRequestParser = string "add-teacher"
+addTeacherRequestParser::Parser Request
+addTeacherRequestParser = do
+    command <- keyword "add-teacher"
+    username <- token $ many1 letter :: Parser String
+    symbol "@"
+    password <- token $ many1 alphaNum
+    name <- token $ many1 letter
+    return $ AddTeacherRequest username password name
+    --return $ command ++ " " ++ username++ " " ++ password ++ " " ++ name
+    --let totalthing =  read $ command ++ " " ++  username ++  " " ++ password ++ " " ++ name :: String
+    
 
 -- add-student parser
 addStudentRequestParser::Parser String
-addStudentRequestParser = string "add-student"
+addStudentRequestParser = keyword "add-student"
 
 -- change-password parser
 changePasswordRequestParser::Parser String
-changePasswordRequestParser = string "change-password"
+changePasswordRequestParser = keyword "change-password"
 
 -- set-doodle parser
 setDoodleRequestParser::Parser String
-setDoodleRequestParser = string "set-doodle"
+setDoodleRequestParser = keyword "set-doodle"
 
 -- get-doodle parser
 getDoodleRequestParser::Parser String
-getDoodleRequestParser = string "get-doodle"
+getDoodleRequestParser = keyword "get-doodle"
 
 -- subscribe parser
 subscribeRequestParser::Parser String
-subscribeRequestParser = string "subscribe"
+subscribeRequestParser = keyword "subscribe"
 
 -- prefer parser
 preferRequestParser::Parser String
-preferRequestParser = string "prefer"
+preferRequestParser = keyword "prefer"
 
 -- exam-schedule parser
 examScheduleRequestParser::Parser String
-examScheduleRequestParser = string "exam-schedule"
+examScheduleRequestParser = keyword "exam-schedule"
 
 -- Toplevel request parser
-parseRequest::Parser String
-parseRequest =  try addTeacherRequestParser <|> 
-                try addStudentRequestParser <|> 
-                try changePasswordRequestParser <|> 
-                try setDoodleRequestParser <|> 
-                try getDoodleRequestParser <|> 
-                try subscribeRequestParser <|> 
-                try preferRequestParser <|> 
-                try examScheduleRequestParser
+parseRequest::Parser Request
+parseRequest =  try addTeacherRequestParser 
+              --  try addStudentRequestParser <|>
+              --  try changePasswordRequestParser <|>
+              --  try setDoodleRequestParser <|>
+              --  try getDoodleRequestParser <|>
+              --  try subscribeRequestParser <|>
+              --  try preferRequestParser <|>
+              --  try examScheduleRequestParser
 
-request::Parser String
+request::Parser Request
 request = do
-   parseRequest
+    parseRequest
