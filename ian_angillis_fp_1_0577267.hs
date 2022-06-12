@@ -24,7 +24,7 @@ instance Ord ZonedTime where
 instance Show t => Show (MyDoodle t) where
     show (MyDoodle title timeslots) = if null timeslots then "+" ++ createCharLine "-" width ++ "+" ++ "\n| " ++ show title ++ "|\n+" ++ createCharLine "-" width ++ "+" else "+" ++ createCharLine "-" width ++ "+" ++ "\n| " ++ show title ++ "|\n+" ++ createCharLine "-" width ++ "+"  ++ showSlots timeslots
         where
-        width = length title + 2
+        width = length title + 3
         longestslotLength = longestTimeslotLength timeslots
         slotWidth = longestTimeslotLength timeslots - 3
         showSlots [] = "\n+" ++ createCharLine "-" slotWidth ++ "+"
@@ -68,7 +68,9 @@ instance Pool MyPool where
     get k       (MyPool pool) =  Map.lookup k pool
 
 newKey:: (Ord k, Enum k) => [k] -> k
-newKey keys = if null keys then toEnum 0 else succ $ maximum keys
+newKey keys 
+    | null keys = toEnum 0 
+    | otherwise = succ $ maximum keys
 
 doesNotOverlap::Ord t =>t -> t -> t -> t -> Bool
 doesNotOverlap s1 e1 s2 e2 = (s1 < s2 && e1 <= s2) ||  (s1 >= e2 && e1 > e2)
