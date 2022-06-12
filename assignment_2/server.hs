@@ -1,13 +1,17 @@
 -- Echo server program
 module Main (main) where
 
+-- imports
 import Control.Concurrent (forkFinally, forkIO)
 import qualified Control.Exception as E
 import Control.Monad (unless, forever, void)
 import qualified Data.ByteString as S
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
+import Text.Parsec hiding (State, token)
+import Text.Parsec.String
 
+-- Code is modified from starting point at https://hackage.haskell.org/package/network-3.1.2.7/docs/Network-Socket.html
 main :: IO ()
 main = runTCPServer Nothing "3000" talk
   where
@@ -46,3 +50,65 @@ runTCPServer mhost port server = withSocketsDo $ do
             -- non-atomic setups (e.g. spawning a subprocess to handle
             -- @conn@) before proper cleanup of @conn@ is your case
             forkFinally (server conn) (const $ gracefulClose conn 5000)
+
+
+-- Create the data type request to differentiate between different request
+
+type Username = String
+type Password = String
+
+data Request = AddTeacherRequest Username Password String           
+                | AddStudentRequest Username Password String        
+                | ChangePasswordRequest Username Password String    
+                | SetDoodleRequest Username Password                
+                | GetDoodleRequest Username Password                
+                | SubscribeRequest Username Password                
+                | PreferRequest Username Password                   
+                | ExamScheduleRequest                               deriving (Show)
+
+-- add-teacher parser
+addTeacherRequestParser::Parser String
+addTeacherRequestParser = string "add-teacher"
+
+-- add-student parser
+addStudentRequestParser::Parser String
+addStudentRequestParser = string "add-student"
+
+-- change-password parser
+changePasswordRequestParser::Parser String
+changePasswordRequestParser = string "change-password"
+
+-- set-doodle parser
+setDoodleRequestParser::Parser String
+setDoodleRequestParser = string "set-doodle"
+
+-- get-doodle parser
+getDoodleRequestParser::Parser String
+getDoodleRequestParser = string "get-doodle"
+
+-- subscribe parser
+subscribeRequestParser::Parser String
+subscribeRequestParser = string "subscribe"
+
+-- prefer parser
+preferRequestParser::Parser String
+preferRequestParser = string "prefer"
+
+-- exam-schedule parser
+examScheduleRequestParser::Parser String
+examScheduleRequestParser = string "exam-schedule"
+
+-- Toplevel request parser
+parseRequest::Parser String
+parseRequest =  try addTeacherRequestParser <|> 
+                try addStudentRequestParser <|> 
+                try changePasswordRequestParser <|> 
+                try setDoodleRequestParser <|> 
+                try getDoodleRequestParser <|> 
+                try subscribeRequestParser <|> 
+                try preferRequestParser <|> 
+                try examScheduleRequestParser
+
+request::Parser String
+request = do
+   parseRequest
