@@ -14,6 +14,21 @@ main = runTCPClient "127.0.0.1" "3000" $ \s -> do
     msg <- recv s 1024
     putStr "Received: "
     C.putStrLn msg
+    sendAll s "add-student admin@1234 karen"
+    msg <- recv s 1024
+    putStr "Received: "
+    C.putStrLn msg
+    sendAll s "add-student admin@1234 jos"
+    msg <- recv s 1024
+    putStr "Received: "
+    C.putStrLn msg
+
+request::String->IO()
+request msg = runTCPClient "127.0.0.1" "3000" $ \s -> do
+    sendAll s $ C.pack msg
+    msg <- recv s 1024
+    putStr "Received: "
+    C.putStrLn msg
 
 -- from the "network-run" package.
 runTCPClient :: HostName -> ServiceName -> (Socket -> IO a) -> IO a

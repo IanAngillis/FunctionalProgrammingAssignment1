@@ -3,7 +3,9 @@
 module Main (main) where
 
 -- imports
-import Control.Concurrent (forkFinally, forkIO)
+import qualified Assignment1 as AS1
+import Control.Concurrent
+import Control.Concurrent.STM
 import qualified Control.Exception as E
 import Control.Monad (unless, forever, void)
 import qualified Data.ByteString as S
@@ -17,55 +19,145 @@ import Data.Either
 import System.Environment
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as Map
-
-
+import System.Random
+import Data.Maybe
 import Data.Word
+import Data.Bool (Bool)
+import GHC.Conc (writeTVar, newTVar)
+import System.Random (getStdGen)
+
+-- WE NEED A STUDENT CLASS AND A TEACHER CLASS
+-- THE STUDENT AND TEACHER CLASS ARE THERE FOR DIFFERENTIATION
+-- THE STUDENT IS NAME AND PASSWORD AND A LIST OF EXAMS IDENTIFIERS IT IS SUBSCRIBED TO
+-- THE TEACHER IS NAME AND PASSWORD AND A LIST OF EXAM IDENTIFIERS
+-- THE ADMIN HAS NAME AND PASSWORD
+
+data User = User String String [String] Role deriving (Eq, Show)
+data Role = STUDENT | TEACHER | ADMIN deriving (Eq, Show)
+
 
 -- https://stackoverflow.com/questions/10623424/haskell-how-to-convert-char-to-word8
 charToWord8 :: Char -> Word8
 charToWord8 = toEnum . fromEnum
 
-convertStringToWord8 ::[Char] -> [Word8]
+convertStringToWord8 ::String -> [Word8]
 convertStringToWord8 = map charToWord8
 
+-- Users code
+users = Map.insert "admin" "1234" Map.empty
 
 
+type State = TVar (Map.Map String User)
+
+newState::String -> String  -> IO State
+newState username password = atomically (do {
+                                let m = Map.insert username (User username password [] ADMIN ) Map.empty
+                                ;newTVar m
+                                ;
+})
+
+--handleAddTeacherRequest::State -> String -> String -> String -> Socket -> IO ()
+--handleAddTeacherRequest state username password newname s = 
+
+
+                --(AddStudentRequest username password name)              -> "handled add-student"
+                --(ChangePasswordRequest username password newpassword)   -> "handle change-password"
+                --(SetDoodleRequest username password doodle times)       -> "handle set-doodle"
+                --(GetDoodleRequest username password doodle)             -> "handle get-doodle"
+                --(SubscribeRequest username password doodle)             -> "handle subscribe"
+                --(PreferRequest username password doodle time)           -> "handle prefer"
+                --(ExamScheduleRequest username password)                 -> "handle exam-schedule"
+
+
+                               -- (AddTeacherRequest username password newname)  ->  atomically (do 
+                               --                                                 users <- readTVar state
+                               --                                                 if username == "admin" && fromJust (Map.lookup "admin" users) == password
+                               --                                                                 then
+                               --                                                                     writeTVar state $ Map.insert newname "PASS" users
+                               --                                                                     return "ok PASS"
+                               --                                                                 else
+                                --                                                                    return 
+
+-- Creates a new password
+getpassword::IO [Char]
+getpassword = do
+    gen <- getStdGen
+    newStdGen
+    return (take 4 $ randomRs ('0','z') gen :: [Char])
+
+-- handleParsedRequest: enables the administrator to add a teacher
+handleParsedRequest::Request -> State -> IO String
+handleParsedRequest (AddTeacherRequest admin password teacher) s = do
+    newpass <- getpassword
+    atomically (do {
+        users <- readTVar s
+        ;let (User n p xs r) = fromJust(Map.lookup admin users)
+        ;if (User n p xs r) == User admin password xs ADMIN
+            then do
+                writeTVar s $ Map.insert teacher (User teacher newpass [] TEACHER) users
+                return ("ok " ++ newpass)
+            else
+                return "wrong-login"
+})
+
+-- AddStudentRequest: enables the administrator to add a student
+handleParsedRequest (AddStudentRequest admin password student) s = do
+    newpass <- getpassword
+    atomically (do {
+        users <- readTVar s
+        ;let (User n p xs r) = fromJust (Map.lookup admin users)
+        ;if (User n p xs r) == User admin password xs ADMIN
+            then do
+                writeTVar s $ Map.insert student (User student newpass [] STUDENT) users
+                return ("ok " ++ newpass)
+            else
+                return "wrong-login"
+})
+
+-- ChangePassWordRequest: enables the user to change their password
+handleParsedRequest (ChangePasswordRequest user password newpass) s = do
+    atomically (do {
+        users <- readTVar s
+        ;let (User n p xs r) = fromJust(Map.lookup user users)
+        ;if (User n p xs r) == User user password xs r
+            then do
+                writeTVar s $ Map.insert n (User n newpass xs r) users
+                return "ok"
+            else
+                return "wrong-login"
+})
+
+handleParsedRequest InvalidRequest s = return "invalid request"
 
 -- Code is modified from starting point at https://hackage.haskell.org/package/network-3.1.2.7/docs/Network-Socket.html
 main :: IO ()
 main = runTCPServer Nothing "3000" talk
   where
-    talk s = do
+    talk s state = do
         msg <- recv s 1024
-        forkIO (handleRequest msg s) -- Handles it in a seperate thread
-        talk s
+        forkIO (handleRequest msg s state) -- Handles it in a seperate thread
+        talk s state
 
 -- Handles the request that is accepted on the port
 -- TODO sends to all, change to receiver
-handleRequest msg s = do
+handleRequest msg s state=
         unless (S.null msg) $ do
-          print msg
-          -- Parse the request, if we do not have a correct parsing we return and invalidrequest
-          let request = fromRight InvalidRequest $ parse getRequest "" $ BS.unpack msg -- We use the let so that we can pure code, allows us to use the parser monad
-              response = case  request of
-                                (AddTeacherRequest username password name)              -> "handled add-teacher"
-                                (AddStudentRequest username password name)              -> "handled add-student"
-                                (ChangePasswordRequest username password newpassword)   -> "handle change-password"
-                                (SetDoodleRequest username password doodle times)       -> "handle set-doodle"
-                                (GetDoodleRequest username password doodle)             -> "handle get-doodle"
-                                (SubscribeRequest username password doodle)             -> "handle subscribe"
-                                (PreferRequest username password doodle time)           -> "handle prefer"
-                                (ExamScheduleRequest username password)                 -> "handle exam-schedule"
-                                InvalidRequest                                          ->  "not found"
-          print response
-          sendAll s $ BS.pack response
+  print msg
+
+  -- Parse the request, if we do not have a correct parsing we return and invalidrequest
+  let request = fromRight InvalidRequest $ parse getRequest "" $ BS.unpack msg -- We use the let so that we can pure code, allows us to use the parser monad
+  response <- handleParsedRequest request state
+  sendAll s $ BS.pack response
+
 
 
 -- from the "network-run" package.
-runTCPServer :: Maybe HostName -> ServiceName -> (Socket -> IO a) -> IO a
+runTCPServer :: Maybe HostName -> ServiceName -> (Socket -> State -> IO a) -> IO a
 runTCPServer mhost port server = withSocketsDo $ do
+    state <- newState "admin" "1234"
     addr <- resolve
-    E.bracket (open addr) close loop -- Control.Exception
+    --state <- atomically (return newTVar $ Map.insert "admin" "1234" Map.empty)
+    E.bracket (open addr) close (loop state)  -- Control.Exception
   where
     resolve = do
         let hints = defaultHints {
@@ -79,13 +171,13 @@ runTCPServer mhost port server = withSocketsDo $ do
         bind sock $ addrAddress addr
         listen sock 1024
         return sock
-    loop sock = forever $ E.bracketOnError (accept sock) (close . fst)
+    loop state sock  = forever $ E.bracketOnError (accept sock) (close . fst)
         $ \(conn, _peer) -> void $
             -- 'forkFinally' alone is unlikely to fail thus leaking @conn@,
             -- but 'E.bracketOnError' above will be necessary if some
             -- non-atomic setups (e.g. spawning a subprocess to handle
             -- @conn@) before proper cleanup of @conn@ is your case
-            forkFinally (server conn) (const $ gracefulClose conn 5000)
+            forkFinally (server conn state) (const $ gracefulClose conn 5000)
 
 
 -- Create the data type request to differentiate between different request
@@ -215,12 +307,8 @@ parseRequest =  try addTeacherRequestParser <|>
 
 --toplevel
 getRequest::Parser Request
-getRequest = do
+getRequest =
     parseRequest
-
--- Users code
-users = Map.empty
-
 
 -- Testing code
 
