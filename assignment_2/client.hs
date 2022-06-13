@@ -6,10 +6,11 @@ import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as C
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
+import Data.Word
 
 main :: IO ()
 main = runTCPClient "127.0.0.1" "3000" $ \s -> do
-    sendAll s "Hello, world!"
+    sendAll s "add-teacher admin@1234 walter"
     msg <- recv s 1024
     putStr "Received: "
     C.putStrLn msg
@@ -26,3 +27,12 @@ runTCPClient host port client = withSocketsDo $ do
     open addr = E.bracketOnError (openSocket addr) close $ \sock -> do
         connect sock $ addrAddress addr
         return sock
+
+
+
+
+charToWord8 :: Char -> Word8
+charToWord8 = toEnum . fromEnum
+
+convertStringToWord8 ::[Char] -> [Word8]
+convertStringToWord8 = map charToWord8
