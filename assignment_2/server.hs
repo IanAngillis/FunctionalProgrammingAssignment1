@@ -19,64 +19,41 @@ import Data.Either
 import System.Environment
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as Map
-import System.Random
 import Data.Maybe
 import Data.Word
 import Data.Bool (Bool)
 import GHC.Conc (writeTVar, newTVar)
-import System.Random (getStdGen)
+import System.Random
+import Data.Time.LocalTime
+import Data.Time (UTCTime)
+import Data.Time.Format.ISO8601
 
--- WE NEED A STUDENT CLASS AND A TEACHER CLASS
--- THE STUDENT AND TEACHER CLASS ARE THERE FOR DIFFERENTIATION
--- THE STUDENT IS NAME AND PASSWORD AND A LIST OF EXAMS IDENTIFIERS IT IS SUBSCRIBED TO
--- THE TEACHER IS NAME AND PASSWORD AND A LIST OF EXAM IDENTIFIERS
--- THE ADMIN HAS NAME AND PASSWORD
-
+-- EXTRA DATA TYPES USED IN THE ASSIGNMENT
 data User = User String String [String] Role deriving (Eq, Show)
 data Role = STUDENT | TEACHER | ADMIN deriving (Eq, Show)
+data State = State (TVar (Map.Map String User)) (TVar (Map.Map String (AS1.MyDoodle ZonedTime)))
+data Request =  AddTeacherRequest String String String
+                | AddStudentRequest String String String
+                | ChangePasswordRequest String String String
+                | SetDoodleRequest String String String String -- username password doodle slots
+                | GetDoodleRequest String String String
+                | SubscribeRequest String String String
+                | PreferRequest String String String String
+                | ExamScheduleRequest String String
+                | InvalidRequest                deriving (Show)
 
 
--- https://stackoverflow.com/questions/10623424/haskell-how-to-convert-char-to-word8
-charToWord8 :: Char -> Word8
-charToWord8 = toEnum . fromEnum
+-- HELPER FUNCTION FOR VARIOUS THINGS LIKE PARSER AND STM
 
-convertStringToWord8 ::String -> [Word8]
-convertStringToWord8 = map charToWord8
-
--- Users code
-users = Map.insert "admin" "1234" Map.empty
-
-
-type State = TVar (Map.Map String User)
-
+-- Create a new empty state when the server boots
 newState::String -> String  -> IO State
 newState username password = atomically (do {
-                                let m = Map.insert username (User username password [] ADMIN ) Map.empty
-                                ;newTVar m
-                                ;
+                                let u = Map.insert username (User username password [] ADMIN ) Map.empty
+                                    d = Map.empty
+                                ;users  <- newTVar u
+                                ;doodles <- newTVar d
+                                ;return (State users doodles)
 })
-
---handleAddTeacherRequest::State -> String -> String -> String -> Socket -> IO ()
---handleAddTeacherRequest state username password newname s = 
-
-
-                --(AddStudentRequest username password name)              -> "handled add-student"
-                --(ChangePasswordRequest username password newpassword)   -> "handle change-password"
-                --(SetDoodleRequest username password doodle times)       -> "handle set-doodle"
-                --(GetDoodleRequest username password doodle)             -> "handle get-doodle"
-                --(SubscribeRequest username password doodle)             -> "handle subscribe"
-                --(PreferRequest username password doodle time)           -> "handle prefer"
-                --(ExamScheduleRequest username password)                 -> "handle exam-schedule"
-
-
-                               -- (AddTeacherRequest username password newname)  ->  atomically (do 
-                               --                                                 users <- readTVar state
-                               --                                                 if username == "admin" && fromJust (Map.lookup "admin" users) == password
-                               --                                                                 then
-                               --                                                                     writeTVar state $ Map.insert newname "PASS" users
-                               --                                                                     return "ok PASS"
-                               --                                                                 else
-                                --                                                                    return 
 
 -- Creates a new password
 getpassword::IO [Char]
@@ -87,45 +64,104 @@ getpassword = do
 
 -- handleParsedRequest: enables the administrator to add a teacher
 handleParsedRequest::Request -> State -> IO String
-handleParsedRequest (AddTeacherRequest admin password teacher) s = do
+handleParsedRequest (AddTeacherRequest admin password teacher) (State ux dx) = do
     newpass <- getpassword
     atomically (do {
-        users <- readTVar s
+        users <- readTVar ux
         ;let (User n p xs r) = fromJust(Map.lookup admin users)
-        ;if (User n p xs r) == User admin password xs ADMIN
+        ;if User n p xs r == User admin password xs ADMIN
             then do
-                writeTVar s $ Map.insert teacher (User teacher newpass [] TEACHER) users
-                return ("ok " ++ newpass)
+                if Map.member teacher users
+                    then do
+                        return "id-taken"
+                    else do
+                        writeTVar ux $ Map.insert teacher (User teacher newpass [] TEACHER) users
+                        return ("ok " ++ newpass)
             else
                 return "wrong-login"
 })
 
 -- AddStudentRequest: enables the administrator to add a student
-handleParsedRequest (AddStudentRequest admin password student) s = do
+handleParsedRequest (AddStudentRequest admin password student) (State ux dx) = do
     newpass <- getpassword
     atomically (do {
-        users <- readTVar s
+        users <- readTVar ux
         ;let (User n p xs r) = fromJust (Map.lookup admin users)
-        ;if (User n p xs r) == User admin password xs ADMIN
+        ;if User n p xs r == User admin password xs ADMIN
             then do
-                writeTVar s $ Map.insert student (User student newpass [] STUDENT) users
+                writeTVar ux $ Map.insert student (User student newpass [] STUDENT) users
                 return ("ok " ++ newpass)
             else
                 return "wrong-login"
 })
 
 -- ChangePassWordRequest: enables the user to change their password
-handleParsedRequest (ChangePasswordRequest user password newpass) s = do
+handleParsedRequest (ChangePasswordRequest user password newpass) (State ux dx) = do
     atomically (do {
-        users <- readTVar s
+        users <- readTVar ux
         ;let (User n p xs r) = fromJust(Map.lookup user users)
-        ;if (User n p xs r) == User user password xs r
+        ;if User n p xs r == User user password xs r
             then do
-                writeTVar s $ Map.insert n (User n newpass xs r) users
+                writeTVar ux $ Map.insert n (User n newpass xs r) users
                 return "ok"
             else
                 return "wrong-login"
 })
+
+-- //TODO SetDoodleRequest: enables teachers to create new exams
+
+
+-- GetDoodleRequest: enables the user to change get a doodle.
+-- TODO proper timeslot formatting
+handleParsedRequest (GetDoodleRequest user password doodle) (State ux dx) = do
+    atomically (do {
+        users <- readTVar ux
+        ;doodles <- readTVar dx
+        ;let (User n p xs r) = fromJust(Map.lookup user users)
+        ;if User n p xs r == User user password xs r
+            then do
+                if isNothing (Map.lookup doodle doodles)
+                    then do
+                        return "no-such-id"
+                    else do
+                        let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
+                        return (show slots)
+            else
+                return "wrong-login"
+})
+
+-- Subscribe to an exam.
+-- TODO can be subscribed mutliple times to the same exam
+handleParsedRequest (SubscribeRequest user password doodle) (State ux dx) = do
+    atomically (do {
+        users <- readTVar ux
+        ;doodles <- readTVar dx
+        ;let (User n p xs r) = fromJust(Map.lookup user users)
+        ;if User n p xs r == User user password xs STUDENT
+            then do
+                if isNothing (Map.lookup doodle doodles)
+                    then do
+                        return "no-such-id"
+                    else do
+                        let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
+                        if title `elem` xs
+                            then do
+                                return "ok"
+                            else do
+                                writeTVar ux $ Map.insert n (User n p (title:xs) r) users
+                                return "ok"
+            else
+                return "wrong-login"
+})
+
+-- //TODO prefer an exam slot
+
+
+
+
+-- //TODO enable a user to get the current best exam schedule
+
+
 
 handleParsedRequest InvalidRequest s = return "invalid request"
 
@@ -148,8 +184,6 @@ handleRequest msg s state=
   let request = fromRight InvalidRequest $ parse getRequest "" $ BS.unpack msg -- We use the let so that we can pure code, allows us to use the parser monad
   response <- handleParsedRequest request state
   sendAll s $ BS.pack response
-
-
 
 -- from the "network-run" package.
 runTCPServer :: Maybe HostName -> ServiceName -> (Socket -> State -> IO a) -> IO a
@@ -185,21 +219,8 @@ runTCPServer mhost port server = withSocketsDo $ do
 type Username = String
 type Password = String
 
-data Request =  AddTeacherRequest String String String
-                | AddStudentRequest String String String
-                | ChangePasswordRequest String String String
-                | SetDoodleRequest String String String String
-                | GetDoodleRequest String String String
-                | SubscribeRequest String String String
-                | PreferRequest String String String String
-                | ExamScheduleRequest String String
-                | InvalidRequest                deriving (Show)
-
 
 -- Helper functions, taken from Solutions12.hs from the WPO. They take care of whitespaces
-
-
-
 token :: Parser a -> Parser a
 token p = try $ spaces >> p
 
