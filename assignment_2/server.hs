@@ -27,6 +27,7 @@ import System.Random
 import Data.Time.LocalTime
 import Data.Time (UTCTime)
 import Data.Time.Format.ISO8601
+import Language.Haskell.TH (doublePrimL)
 
 -- EXTRA DATA TYPES USED IN THE ASSIGNMENT
 data User = User String String [String] Role deriving (Eq, Show)
@@ -44,6 +45,7 @@ data Request =  AddTeacherRequest String String String
 
 
 -- HELPER FUNCTION FOR VARIOUS THINGS LIKE PARSER AND STM
+-- TODO HANDLE CREATION OF DOODLES AND TIMESLOTS IN THE PARSER
 
 -- Create a new empty state when the server boots
 newState::String -> String  -> IO State
@@ -55,12 +57,12 @@ newState username password = atomically (do {
                                 ;return (State users doodles)
 })
 
--- Creates a new password
+-- Creates a new password -- //TODO needs to produce alphanumerical characters
 getpassword::IO [Char]
 getpassword = do
     gen <- getStdGen
     newStdGen
-    return (take 4 $ randomRs ('0','z') gen :: [Char])
+    return (take 4 $ randomRs ('a','z') gen :: [Char])
 
 -- handleParsedRequest: enables the administrator to add a teacher
 handleParsedRequest::Request -> State -> IO String
@@ -87,10 +89,14 @@ handleParsedRequest (AddStudentRequest admin password student) (State ux dx) = d
     atomically (do {
         users <- readTVar ux
         ;let (User n p xs r) = fromJust (Map.lookup admin users)
-        ;if User n p xs r == User admin password xs ADMIN
+         ;if User n p xs r == User admin password xs ADMIN
             then do
-                writeTVar ux $ Map.insert student (User student newpass [] STUDENT) users
-                return ("ok " ++ newpass)
+                if Map.member student users
+                    then do
+                        return "id-taken"
+                    else do
+                        writeTVar ux $ Map.insert student (User student newpass [] STUDENT) users
+                        return ("ok " ++ newpass)
             else
                 return "wrong-login"
 })
@@ -109,6 +115,37 @@ handleParsedRequest (ChangePasswordRequest user password newpass) (State ux dx) 
 })
 
 -- //TODO SetDoodleRequest: enables teachers to create new exams
+{-
+Step 1. Get Users
+Step 2. Get Doodles
+Stem 3. If the doodle does not exist yet, then create the doodle and add it to the doodle list of doodles from the teacher.
+Step 4. If the teacher already defined a doodle for the exam, the new doodle should overwrite the old one.
+Step 5. If another teacher already claimed the exam identifier, the server should return the message "id-taken".
+
+-}
+handleParsedRequest (SetDoodleRequest user password doodle timeslots) (State ux dx) = do
+    atomically (do {
+        users <- readTVar ux                                    -- Read the users
+        ;doodles <- readTVar dx                                 -- Read the doodle
+        ;let (User n p xs r) = fromJust(Map.lookup user users)  -- Get the user
+        ;if User n p xs r == User user password xs TEACHER       -- If the user login checks out
+            then do
+                if isNothing (Map.lookup doodle doodles) -- The doodle does not exist yet, then create the doodle and att it to the doodle list of doodles from the teacher
+                    then do
+                        writeTVar ux $ Map.insert n (User n p (doodle:xs) r) users
+                        writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle []) doodles
+                        return "ok"
+                    else do -- The doodle does exist. Check if it is from the teacher. If it is, overwrite, else 
+                        let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
+                        if title `elem` xs
+                            then do 
+                                writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle []) doodles -- TODO populate slots
+                                return "ok"
+                            else do
+                                return "id-taken"
+            else
+                return "wrong-login"
+})
 
 
 -- GetDoodleRequest: enables the user to change get a doodle.
@@ -155,7 +192,7 @@ handleParsedRequest (SubscribeRequest user password doodle) (State ux dx) = do
 })
 
 -- //TODO prefer an exam slot
-
+-- GET THE INDEX AND CALL UPDATE FROM THE TYPE CLASS
 
 
 
@@ -178,12 +215,12 @@ main = runTCPServer Nothing "3000" talk
 -- TODO sends to all, change to receiver
 handleRequest msg s state=
         unless (S.null msg) $ do
-  print msg
+            print msg
 
-  -- Parse the request, if we do not have a correct parsing we return and invalidrequest
-  let request = fromRight InvalidRequest $ parse getRequest "" $ BS.unpack msg -- We use the let so that we can pure code, allows us to use the parser monad
-  response <- handleParsedRequest request state
-  sendAll s $ BS.pack response
+            -- Parse the request, if we do not have a correct parsing we return and invalidrequest
+            let request = fromRight InvalidRequest $ parse getRequest "" $ BS.unpack msg -- We use the let so that we can pure code, allows us to use the parser monad
+            response <- handleParsedRequest request state
+            sendAll s $ BS.pack response
 
 -- from the "network-run" package.
 runTCPServer :: Maybe HostName -> ServiceName -> (Socket -> State -> IO a) -> IO a
@@ -353,3 +390,6 @@ testsuite = do
           print test6
           print test7
           print test8
+
+
+doodle = "Cooking [2022-01-04T14:00+01:00 / 2022-01-04T16:00+01:00, 2022-01-04T13:00+01:00 / 2022-01-04T15:00+01:00]"
