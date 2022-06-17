@@ -7,6 +7,7 @@ import qualified Data.ByteString.Char8 as C
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
 import Data.Word
+import Control.Monad
 
 main :: IO ()
 main = runTCPClient "127.0.0.1" "3000" $ \s -> do

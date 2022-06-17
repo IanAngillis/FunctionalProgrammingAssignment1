@@ -221,6 +221,10 @@ handleParsedRequest (PreferRequest user pass doodle slot) (State ux dx) = do
 
 
 -- //TODO enable a user to get the current best exam schedule
+-- Use sequence for this, it combines all the stff together 1 by 1.
+-- For every thing, run a check and accept/reject acoordingly
+-- Check all the accepted ones and seek the most optimal one???
+-- https://stackoverflow.com/questions/14471876/with-a-list-of-lists-combine-each-element-of-each-list-with-each-other-element
 handleParsedRequest (ExamScheduleRequest user pass) (State ux dx) = do
     return "no exam schedule yet"
 
