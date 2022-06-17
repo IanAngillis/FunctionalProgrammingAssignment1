@@ -30,6 +30,7 @@ import Data.Time (UTCTime)
 import Data.Time.Format.ISO8601
 import Language.Haskell.TH (doublePrimL)
 import Doodle (Doodle(toggle))
+import Assignment1 (Timeslot(Timeslot))
 
 -- EXTRA DATA TYPES USED IN THE ASSIGNMENT
 data User = User String String [String] Role deriving (Eq, Show)
@@ -220,16 +221,38 @@ handleParsedRequest (PreferRequest user pass doodle slot) (State ux dx) = do
     })
 
 
+
 -- //TODO enable a user to get the current best exam schedule
 -- Use sequence for this, it combines all the stff together 1 by 1.
 -- For every thing, run a check and accept/reject acoordingly
 -- Check all the accepted ones and seek the most optimal one???
 -- https://stackoverflow.com/questions/14471876/with-a-list-of-lists-combine-each-element-of-each-list-with-each-other-element
 handleParsedRequest (ExamScheduleRequest user pass) (State ux dx) = do
-    return "no exam schedule yet"
+    atomically (do {
+        users <- readTVar ux
+        ;doodles <- readTVar dx
+        let doodleTaggedSlots = map getSlots doodles
+            optimalTimeSlot = calculatOptimalSchedule doodleTaggedSlots
+
+        ;return "no exam schedule yet"
+        })
 
 
 handleParsedRequest InvalidRequest s = return "invalid request"
+
+getSlots::AS1.MyDoodle ZonedTime -> [(String, ZonedTime , ZonedTime, [String] )]
+getSlots (AS1.MyDoodle title slots) = map (tagSlots title) slots
+
+-- Adds a tag to the timeslot to know what the doodle is
+tagSlots::String -> Timeslot ZonedTime -> (String, ZonedTime, ZonedTime, [String])
+tagSlots tag (Timeslot s e p) = (tag, s, e, p)
+
+-- Eerste filter: voor elke leerkracht, verzamel alle timeslots van de examens die hij afneemt, is er een overlap -- FAAL
+-- Tweede filter: voor elke student, verzamel alle timeslots waar die student aan deelneemt, is er een overlap - faal
+-- Lijst met goede schedules - Kies de optimale (die waar het meeste studenten aan deelnemen in totaal)
+optimalTimeSlot::[(String, ZonedTime, ZonedTime, [String])] -> 
+optimalTimeSlot = 
+
 
 -- Code is modified from starting point at https://hackage.haskell.org/package/network-3.1.2.7/docs/Network-Socket.html
 main :: IO ()
@@ -520,7 +543,6 @@ testsuite = do
           print test6
           print test7
           print test8
-
 
 
 
