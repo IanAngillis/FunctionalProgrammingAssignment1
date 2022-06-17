@@ -20,6 +20,7 @@ import System.Environment
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as Map
 import Data.Maybe
+import Data.List
 import Data.Word
 import Data.Bool (Bool)
 import GHC.Conc (writeTVar, newTVar)
@@ -28,6 +29,7 @@ import Data.Time.LocalTime
 import Data.Time (UTCTime)
 import Data.Time.Format.ISO8601
 import Language.Haskell.TH (doublePrimL)
+import Doodle (Doodle(toggle))
 
 -- EXTRA DATA TYPES USED IN THE ASSIGNMENT
 data User = User String String [String] Role deriving (Eq, Show)
@@ -36,16 +38,17 @@ data State = State (TVar (Map.Map String User)) (TVar (Map.Map String (AS1.MyDoo
 data Request =  AddTeacherRequest String String String
                 | AddStudentRequest String String String
                 | ChangePasswordRequest String String String
-                | SetDoodleRequest String String String String -- username password doodle slots
+                | SetDoodleRequest String String (AS1.MyDoodle ZonedTime) -- username password doodle slots
                 | GetDoodleRequest String String String
                 | SubscribeRequest String String String
-                | PreferRequest String String String String
+                | PreferRequest String String String (AS1.Timeslot ZonedTime)
                 | ExamScheduleRequest String String
                 | InvalidRequest                deriving (Show)
 
 
 -- HELPER FUNCTION FOR VARIOUS THINGS LIKE PARSER AND STM
 -- TODO HANDLE CREATION OF DOODLES AND TIMESLOTS IN THE PARSER
+-- TODO Make a function that returns Parser ZonedTime
 
 -- Create a new empty state when the server boots
 newState::String -> String  -> IO State
@@ -64,7 +67,7 @@ getpassword = do
     newStdGen
     return (take 4 $ randomRs ('a','z') gen :: [Char])
 
--- handleParsedRequest: enables the administrator to add a teacher
+-- handleParsedRequest: enables the administrator to add a teacher DONE
 handleParsedRequest::Request -> State -> IO String
 handleParsedRequest (AddTeacherRequest admin password teacher) (State ux dx) = do
     newpass <- getpassword
@@ -83,7 +86,7 @@ handleParsedRequest (AddTeacherRequest admin password teacher) (State ux dx) = d
                 return "wrong-login"
 })
 
--- AddStudentRequest: enables the administrator to add a student
+-- AddStudentRequest: enables the administrator to add a student DONE
 handleParsedRequest (AddStudentRequest admin password student) (State ux dx) = do
     newpass <- getpassword
     atomically (do {
@@ -101,7 +104,7 @@ handleParsedRequest (AddStudentRequest admin password student) (State ux dx) = d
                 return "wrong-login"
 })
 
--- ChangePassWordRequest: enables the user to change their password
+-- ChangePassWordRequest: enables the user to change their password DONE
 handleParsedRequest (ChangePasswordRequest user password newpass) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
@@ -123,7 +126,7 @@ Step 4. If the teacher already defined a doodle for the exam, the new doodle sho
 Step 5. If another teacher already claimed the exam identifier, the server should return the message "id-taken".
 
 -}
-handleParsedRequest (SetDoodleRequest user password doodle timeslots) (State ux dx) = do
+handleParsedRequest (SetDoodleRequest user password (AS1.MyDoodle doodle slots)) (State ux dx) = do
     atomically (do {
         users <- readTVar ux                                    -- Read the users
         ;doodles <- readTVar dx                                 -- Read the doodle
@@ -133,13 +136,13 @@ handleParsedRequest (SetDoodleRequest user password doodle timeslots) (State ux 
                 if isNothing (Map.lookup doodle doodles) -- The doodle does not exist yet, then create the doodle and att it to the doodle list of doodles from the teacher
                     then do
                         writeTVar ux $ Map.insert n (User n p (doodle:xs) r) users
-                        writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle []) doodles
-                        return "ok"
+                        writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle (sort slots)) doodles
+                        return $ "ok"
                     else do -- The doodle does exist. Check if it is from the teacher. If it is, overwrite, else 
                         let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
                         if title `elem` xs
-                            then do 
-                                writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle []) doodles -- TODO populate slots
+                            then do
+                                writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle (sort slots)) doodles -- TODO populate slots
                                 return "ok"
                             else do
                                 return "id-taken"
@@ -162,7 +165,7 @@ handleParsedRequest (GetDoodleRequest user password doodle) (State ux dx) = do
                         return "no-such-id"
                     else do
                         let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
-                        return (show slots)
+                        return $ "ok " ++ show slots
             else
                 return "wrong-login"
 })
@@ -193,11 +196,33 @@ handleParsedRequest (SubscribeRequest user password doodle) (State ux dx) = do
 
 -- //TODO prefer an exam slot
 -- GET THE INDEX AND CALL UPDATE FROM THE TYPE CLASS
-
+handleParsedRequest (PreferRequest user pass doodle slot) (State ux dx) = do
+    atomically (do {
+        users <- readTVar ux
+        ;doodles <- readTVar dx
+        ;let (User n p xs r) = fromJust(Map.lookup user users)
+        ;if User n p xs r == User user pass xs STUDENT
+            then do
+                if doodle `elem` xs --Is subscribed to doodle
+                    then do
+                        if isNothing (Map.lookup doodle doodles)
+                            then do
+                                return "no-such-id"
+                            else do
+                                let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
+                                    idx = fromJust $ elemIndex slot slots
+                                writeTVar dx $ Map.insert doodle  (toggle user idx (AS1.MyDoodle title (AS1.removeParticipantFromAllSlots user slots))) doodles
+                                return "ok"
+                    else do
+                        return "not subscribed"
+            else do
+                return "wrong-login"
+    })
 
 
 -- //TODO enable a user to get the current best exam schedule
-
+handleParsedRequest (ExamScheduleRequest user pass) (State ux dx) = do
+    return "no exam schedule yet"
 
 
 handleParsedRequest InvalidRequest s = return "invalid request"
@@ -257,6 +282,87 @@ type Username = String
 type Password = String
 
 
+
+doodle = "Cooking [2022-12-25T16:00:00+01:00/2022-12-25T18:00:00+01:00, 2022-12-25T18:00:00 +01:00/2022-12-25T20:00:00+01:00]"
+date="2022-12-25T16:00:00+01:00"
+
+
+
+
+year::Parser String
+year = count 4 digit
+
+month::Parser String
+month = count 2 digit
+
+day::Parser String
+day = count 2 digit
+
+hours::Parser String
+hours = count 2 digit
+
+minutes::Parser String
+minutes = count 2 digit
+
+seconds::Parser String
+seconds = count 2 digit
+
+
+--"yyyy-mm-ddThh:mm:ss[.sss]±hh:mm "
+zonedTimeParser::Parser ZonedTime
+zonedTimeParser = do
+    year <- year
+    symbol "-"
+    month <- month
+    symbol "-"
+    day <- day
+    symbol "T"
+    hour <- hours
+    symbol ":"
+    minute <- minutes
+    symbol ":"
+    second <- seconds
+    e <- oneOf "+-"
+    e_hour <- hours
+    symbol ":"
+    e_minutes <- minutes
+    let time = year++"-"++month++"-"++day++" "++hour++":"++minute++":"++second++ [e] ++e_hour++":"++e_minutes
+        zonedTime = read time :: ZonedTime
+    return zonedTime
+
+slotParser::Parser (AS1.Timeslot ZonedTime)
+slotParser = do
+    slot1 <- zonedTimeParser
+    symbol "/"
+    slot2 <- zonedTimeParser
+    return (AS1.Timeslot slot1 slot2 [])
+
+slotParserL::Parser [AS1.Timeslot ZonedTime]
+slotParserL = do
+    slot1 <- zonedTimeParser
+    symbol "/"
+    slot2 <- zonedTimeParser
+    return [AS1.Timeslot slot1 slot2 []]
+
+slotParser'::Parser (AS1.Timeslot ZonedTime)
+slotParser' = do
+    slot1 <- zonedTimeParser
+    symbol "/"
+    slot2 <- zonedTimeParser
+    oneOf ",]"
+    return (AS1.Timeslot slot1 slot2 [])
+
+slot :: Parser (AS1.Timeslot ZonedTime)
+slot = token $ slotParser
+
+multipleslots::Parser [AS1.Timeslot ZonedTime]
+multipleslots = do
+    symbol "["
+    try (many1 slotParser')
+
+slots::Parser [AS1.Timeslot ZonedTime]
+slots = token $ multipleslots
+
 -- Helper functions, taken from Solutions12.hs from the WPO. They take care of whitespaces
 token :: Parser a -> Parser a
 token p = try $ spaces >> p
@@ -314,7 +420,7 @@ setDoodleRequestParser = do
     symbol "@"
     password <- word
     doodle <- word
-    SetDoodleRequest username password doodle <$> anyword
+    SetDoodleRequest username password . AS1.MyDoodle doodle <$> slots
 
 -- get-doodle parser
 getDoodleRequestParser::Parser Request
@@ -342,7 +448,7 @@ preferRequestParser = do
     symbol "@"
     password <- word
     doodle <- word
-    PreferRequest username password doodle <$> anyword
+    PreferRequest username password doodle <$> slot
 
 -- exam-schedule parser
 examScheduleRequestParser::Parser Request
@@ -368,19 +474,39 @@ getRequest::Parser Request
 getRequest =
     parseRequest
 
+{-
+doodleParser::Parser (MyDoodle ZonedTime)
+doodleParser = do
+    doodlename <- word
+    timeslots <- timeslotsParser
+    return (MyDoodle doodlename timeslots)
+
+timeslotsParser::Parser [Timeslot]
+timeslotsParser = try singleTime
+-}
+
 -- Testing code
 
+test1 :: Either ParseError Request
 test1 = parse getRequest "" "add-teacher admin@1234 walter"
+test2 :: Either ParseError Request
 test2 = parse getRequest "" "add-student admin@1234 jesse"
+test3 :: Either ParseError Request
 test3 = parse getRequest "" "change-password walter@qf1Qs foobar"
+test4 :: Either ParseError Request
 test4 = parse getRequest "" "get-doodle walter@qf1Qs Cooking"
-test5 = parse getRequest "" "set-doodle walter@foobar Cooking [2022-01-04T14:00+01:00/2022-01-04T16:00+01,2022-01-04T13:00+01:00/2022-01-04T15:00+01:00]"
+test5 :: Either ParseError Request
+test5 = parse getRequest "" "set-doodle ian@foobar Cooking [2022-01-04T14:00:00+01:00/2022-01-04T16:00:00+01:00,2022-01-04T13:00:00+01:00/2022-01-04T15:00:00+01:00]"
+test6 :: Either ParseError Request
 test6 = parse getRequest "" "subscribe jesse@2bYo Cooking"
-test7 = parse getRequest "" "prefer jesse@2bYo Cooking 2022-01-04T13:00+01:00/2022-01-04T15:00+01:00"
+test7 :: Either ParseError Request
+test7 = parse getRequest "" "prefer jesse@2bYo Cooking 2022-01-04T13:00:00+01:00/2022-01-04T15:00:00+01:00"
+test8 :: Either ParseError Request
 test8 = parse getRequest "" "exam-schedule jesse@2bYo"
 
 
 -- Tests functionality
+testsuite :: IO ()
 testsuite = do
           print test1
           print test2
@@ -392,4 +518,7 @@ testsuite = do
           print test8
 
 
-doodle = "Cooking [2022-01-04T14:00+01:00 / 2022-01-04T16:00+01:00, 2022-01-04T13:00+01:00 / 2022-01-04T15:00+01:00]"
+
+
+
+-- fromRight [] $ parse slots "" "[2022-12-25T18:00:00+01:00/2022-12-25T20:00:00+01:00,2022-12-25T16:00:00+01:00/2022-12-25T18:00:00+01:00]"

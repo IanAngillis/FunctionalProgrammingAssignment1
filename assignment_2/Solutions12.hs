@@ -127,6 +127,8 @@ test3 = runReaderT (eval'' $ Let "x" (Const 3) (Times (Var "x") (Var "y"))) [] :
 (<:>) :: Applicative f => f a -> f [a] -> f [a]
 x <:> xs = (:) <$> x <*> xs
 
+
+
 number = many1 digit
 
 
@@ -148,10 +150,7 @@ float = do
   e <- option "" $ oneOf "eE" <:> int
   return . read $ w ++ d ++ e
 
-words'::Parser String
-words' = do
-  w1 <- word
-  return . read w1
+
 --parseRequest::Parser String
 --parseRequest = try addTeacherRequest <|> try addStudentRequest
 

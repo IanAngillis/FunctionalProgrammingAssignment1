@@ -4,7 +4,7 @@ import Data.List
 import qualified Data.Map as Map
 import Data.Time.LocalTime
 import Data.Time (UTCTime)
-import Data.Time.Format.ISO8601
+import Data.Time.Format.ISO8601 ( iso8601Show )
 
 
 
@@ -32,15 +32,28 @@ instance Show t => Show (MyDoodle t) where
         longestslotLength = longestTimeslotLength timeslots
         slotWidth = longestTimeslotLength timeslots - 3
         showSlots [] = "\n+" ++ createCharLine "-" slotWidth ++ "+"
-        showSlots (x:xs) = 
+        showSlots (x:xs) =
             let timeslotString = padTimeslotString (show x) longestslotLength
-                in 
+                in
             "\n" ++ "+" ++ createCharLine "-" slotWidth ++ "+" ++ timeslotString ++ showSlots xs
 
 instance Show t => Show (Timeslot t) where
+    show (Timeslot s e participants) = show s ++ "/" ++ show e
+
+instance Ord t => Ord (Timeslot t) where
+    Timeslot s1 e1 _ `compare` Timeslot s2 e2 _ = compare s1 s2
+    Timeslot s1 e1 _ <= Timeslot s2 e2 _ = s1 <= s2
+    Timeslot s1 e1 _ < Timeslot s2 e2 _ = s1 < s2
+    Timeslot s1 e1 _ > Timeslot s2 e2 _ = s1 > s2
+    Timeslot s1 e1 _ >= Timeslot s2 e2 _ = s1 >= s2
+
+{- Old show from assignment
+instance Show t => Show (Timeslot t) where
     show (Timeslot s e participants) = "\n| " ++ show s ++ " | " ++ show e ++  " | "  ++ showParticipants participants ++ " |"
         where   showParticipants [] = ""
-                showParticipants (x:xs) = " " ++ show x ++ showParticipants xs
+                showParticipants (x:xs) = " " ++ show x ++ showParticipants xs-}
+instance Eq t => Eq (Timeslot t) where
+    Timeslot x1 y1 z1 == Timeslot x2 y2 z2 = x1 == x2 && y1 == y2
 
 -- These are helper functions for the show
 padTimeslotString :: [Char] -> Int -> [Char]
@@ -72,8 +85,8 @@ instance Pool MyPool where
     get k       (MyPool pool) =  Map.lookup k pool
 
 newKey:: (Ord k, Enum k) => [k] -> k
-newKey keys 
-    | null keys = toEnum 0 
+newKey keys
+    | null keys = toEnum 0
     | otherwise = succ $ maximum keys
 
 doesNotOverlap::Ord t =>t -> t -> t -> t -> Bool
@@ -89,10 +102,14 @@ updateTimeslot name f _ [] = []
 updateTimeslot name f 0 ((Timeslot s e participants) : xs) = Timeslot s e (f name participants) : xs
 updateTimeslot name f n (x:xs) = x : updateTimeslot name f (n-1) xs
 
+removeParticipantFromAllSlots::String -> [Timeslot t] -> [Timeslot t]
+removeParticipantFromAllSlots name   [] = []
+removeParticipantFromAllSlots name   ((Timeslot s e participants) : xs) = Timeslot s e (delete name participants) : xs
+
 toggleParticipant::String -> [String] ->  [String]
 toggleParticipant participant [] = [participant]
 toggleParticipant participant (x : xs)
-    | participant == x = xs
+    | participant == x = x:xs
     | otherwise = x : toggleParticipant participant xs
 
 emptyPool :: MyPool Int (MyDoodle ZonedTime)
@@ -105,3 +122,4 @@ main = run emptyPool
 -- Left "Christmas Party"
 -- Just(Right(2022-12-25 16:00:00 +01:00, 2022-12-25 18:00:00 +01:00))
 -- Just(Right(2022-12-25 18:00:00 +01:00, 2022-12-25 20:00:00 +01:00))
+--"[2022-12-25T16:00:00+01:00/2022-12-25T18:00:00+01:00,2022-12-25T18:00:00+01:00/2022-12-25T20:00:00+01:00]"
