@@ -3,6 +3,7 @@
 module Main (main) where
 
 -- imports
+import Debug.Trace
 import qualified Assignment1 as AS1
 import Control.Concurrent
 import Control.Concurrent.STM
@@ -31,6 +32,8 @@ import Data.Time.Format.ISO8601
 import Language.Haskell.TH (doublePrimL)
 import Doodle (Doodle(toggle))
 import Assignment1 (Timeslot(Timeslot))
+import Data.Function (on)
+
 
 -- EXTRA DATA TYPES USED IN THE ASSIGNMENT
 data User = User String String [String] Role deriving (Eq, Show)
@@ -46,7 +49,7 @@ data Request =  AddTeacherRequest String String String
                 | ExamScheduleRequest String String
                 | InvalidRequest                deriving (Show)
 
-
+debug = flip trace
 -- HELPER FUNCTION FOR VARIOUS THINGS LIKE PARSER AND STM
 -- TODO HANDLE CREATION OF DOODLES AND TIMESLOTS IN THE PARSER
 -- TODO Make a function that returns Parser ZonedTime
@@ -231,29 +234,71 @@ handleParsedRequest (ExamScheduleRequest user pass) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
         ;doodles <- readTVar dx
-        let doodleTaggedSlots = map getSlots doodles
-            optimalTimeSlot = calculatOptimalSchedule doodleTaggedSlots
+        ;let doodleTaggedSlots = convertSlots .  convertToValues $ Map.toList doodles
+             schedule = optimalTimeSlot doodleTaggedSlots $ convertToValues $ Map.toList users
+             --count = map \x foldr countStudents 0 x schedule
+            -- xx = zip count schedule
 
-        ;return "no exam schedule yet"
+
+
+        ;return  (show schedule)
         })
 
 
+
+
 handleParsedRequest InvalidRequest s = return "invalid request"
+
+countStudents (n, s, e, p) c = c + length p
+
+
+convertToValues :: [(a, b)] -> [b]
+convertToValues = map snd
+
+convertSlots :: [AS1.MyDoodle ZonedTime] -> [[(String, ZonedTime, ZonedTime, [String])]]
+convertSlots = map getSlots
 
 getSlots::AS1.MyDoodle ZonedTime -> [(String, ZonedTime , ZonedTime, [String] )]
 getSlots (AS1.MyDoodle title slots) = map (tagSlots title) slots
 
 -- Adds a tag to the timeslot to know what the doodle is
 tagSlots::String -> Timeslot ZonedTime -> (String, ZonedTime, ZonedTime, [String])
-tagSlots tag (Timeslot s e p) = (tag, s, e, p)
+tagSlots tag (AS1.Timeslot s e p) = (tag, s, e, p)
 
 -- Eerste filter: voor elke leerkracht, verzamel alle timeslots van de examens die hij afneemt, is er een overlap -- FAAL
 -- Tweede filter: voor elke student, verzamel alle timeslots waar die student aan deelneemt, is er een overlap - faal
 -- Lijst met goede schedules - Kies de optimale (die waar het meeste studenten aan deelnemen in totaal)
-optimalTimeSlot::[(String, ZonedTime, ZonedTime, [String])] -> 
-optimalTimeSlot = 
+-- THINK ABOUT OVERLAP, DO WE REALLY NEED TO DO THIS IN TWO STEPS??? CHECK IF THERE IS OVERLAP FOR ANYONE
+-- I THINK SO, TEACHERS ORGANISE IT, MAYBE ADD ORGANISE TAG SO EVERYTHING IS IN THE FORMAT AND NO NEED TO LOOK STUFF UP??
+-- TODO CHGANGE TO RETURN OPTIMAL ONE
+optimalTimeSlot::[[(String, ZonedTime, ZonedTime, [String])]] ->  [User] -> [(String, ZonedTime, ZonedTime, [String])]
+optimalTimeSlot doodles users = let teachers = filter (hasRole TEACHER) users
+                                    students = filter (hasRole STUDENT) users
+                                    acceptedschedules = [schedule | schedule  <-  sequence doodles, teachersDoNotOverlap teachers schedule, studentsDoNotOverlap students schedule] -- ADD FILTER
+                        in snd . maximum $ zip (map (foldr countStudents 0 ) acceptedschedules) acceptedschedules
+
+-- For every teacher (map over the teachers) - get all their tuples - see if there is no overlap between any element.
+teachersDoNotOverlap::[User] -> [(String, ZonedTime, ZonedTime, [String])] -> Bool
+teachersDoNotOverlap teachers schedule = all (checkNoOverlaps . teacherGivesExam  schedule) teachers
+
+studentsDoNotOverlap::[User] -> [(String, ZonedTime, ZonedTime, [String])] -> Bool
+studentsDoNotOverlap students schedule = and . map checkNoOverlaps $ map (studentPrefersExam schedule) students
 
 
+teacherGivesExam::[(String, ZonedTime, ZonedTime, [String])] -> User -> [(String, ZonedTime, ZonedTime, [String])]
+teacherGivesExam schedule (User name _ exams TEACHER) = [(n, s, e, p) | (n, s, e, p) <- schedule, n `elem` exams]
+
+
+studentPrefersExam::[(String, ZonedTime, ZonedTime, [String])] -> User -> [(String, ZonedTime, ZonedTime, [String])]
+studentPrefersExam schedule (User name _ exams STUDENT) = [(n, s, e, p) | (n, s, e, p) <- schedule, n `elem` exams, name `elem` p]
+
+
+hasRole::Role -> User -> Bool
+hasRole role (User _ _ _ r) = r == role
+
+checkNoOverlaps::[(String, ZonedTime, ZonedTime, [String])] -> Bool
+checkNoOverlaps exams = let overlapresults =  [ AS1.doesNotOverlap s1 e1 s2 e2 | (n2, s1, e1, p2) <- exams, (n2, s2, e2, p2) <- exams, (n2, s1, e1, p2) < (n2, s2, e2, p2)]
+                        in and overlapresults
 -- Code is modified from starting point at https://hackage.haskell.org/package/network-3.1.2.7/docs/Network-Socket.html
 main :: IO ()
 main = runTCPServer Nothing "3000" talk
@@ -523,13 +568,13 @@ test3 = parse getRequest "" "change-password walter@qf1Qs foobar"
 test4 :: Either ParseError Request
 test4 = parse getRequest "" "get-doodle walter@qf1Qs Cooking"
 test5 :: Either ParseError Request
-test5 = parse getRequest "" "set-doodle ian@foobar Cooking [2022-01-04T14:00:00+01:00/2022-01-04T16:00:00+01:00,2022-01-04T13:00:00+01:00/2022-01-04T15:00:00+01:00]"
+test5 = parse getRequest "" "set-doodle walter@wfum Cooking [2022-01-04T14:00:00+01:00/2022-01-04T16:00:00+01:00,2022-01-04T13:00:00+01:00/2022-01-04T15:00:00+01:00]"
 test6 :: Either ParseError Request
-test6 = parse getRequest "" "subscribe jesse@2bYo Cooking"
+test6 = parse getRequest "" "subscribe karen@umfl Cooking"
 test7 :: Either ParseError Request
-test7 = parse getRequest "" "prefer jesse@2bYo Cooking 2022-01-04T13:00:00+01:00/2022-01-04T15:00:00+01:00"
+test7 = parse getRequest "" "prefer jos@flyb Cooking 2022-01-04T14:00:00+01:00/2022-01-04T16:00:00+01:00"
 test8 :: Either ParseError Request
-test8 = parse getRequest "" "exam-schedule jesse@2bYo"
+test8 = parse getRequest "" "exam-schedule karen@fsko"
 
 
 -- Tests functionality
