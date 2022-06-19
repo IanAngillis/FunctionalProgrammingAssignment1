@@ -31,6 +31,9 @@ request msg = runTCPClient "127.0.0.1" "3000" $ \s -> do
     putStr "Received: "
     C.putStrLn msg
 
+getnaivepassword [] = []
+getnaivepassword (x:xs) = if length (x:xs) == 4 then x:xs else getnaivepassword xs
+
 -- from the "network-run" package.
 runTCPClient :: HostName -> ServiceName -> (Socket -> IO a) -> IO a
 runTCPClient host port client = withSocketsDo $ do

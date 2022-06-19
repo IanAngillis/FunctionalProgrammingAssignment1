@@ -49,10 +49,10 @@ data Request =  AddTeacherRequest String String String
                 | ExamScheduleRequest String String
                 | InvalidRequest                deriving (Show)
 
-debug = flip trace
--- HELPER FUNCTION FOR VARIOUS THINGS LIKE PARSER AND STM
--- TODO HANDLE CREATION OF DOODLES AND TIMESLOTS IN THE PARSER
--- TODO Make a function that returns Parser ZonedTime
+-- Data type to easily print - if I had more time I would change every
+data Exam = Exam String ZonedTime ZonedTime [String]
+instance Show Exam where
+    show (Exam name starttime endtime participants) = name ++ ": " ++ show starttime ++ "/" ++ show endtime
 
 -- Create a new empty state when the server boots
 newState::String -> String  -> IO State
@@ -71,7 +71,6 @@ getpassword = do
     newStdGen
     return (take 4 $ randomRs ('a','z') gen :: [Char])
 
--- handleParsedRequest: enables the administrator to add a teacher DONE
 handleParsedRequest::Request -> State -> IO String
 handleParsedRequest (AddTeacherRequest admin password teacher) (State ux dx) = do
     newpass <- getpassword
@@ -90,7 +89,6 @@ handleParsedRequest (AddTeacherRequest admin password teacher) (State ux dx) = d
                 return "wrong-login"
 })
 
--- AddStudentRequest: enables the administrator to add a student DONE
 handleParsedRequest (AddStudentRequest admin password student) (State ux dx) = do
     newpass <- getpassword
     atomically (do {
@@ -108,7 +106,6 @@ handleParsedRequest (AddStudentRequest admin password student) (State ux dx) = d
                 return "wrong-login"
 })
 
--- ChangePassWordRequest: enables the user to change their password DONE
 handleParsedRequest (ChangePasswordRequest user password newpass) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
@@ -121,15 +118,6 @@ handleParsedRequest (ChangePasswordRequest user password newpass) (State ux dx) 
                 return "wrong-login"
 })
 
--- //TODO SetDoodleRequest: enables teachers to create new exams
-{-
-Step 1. Get Users
-Step 2. Get Doodles
-Stem 3. If the doodle does not exist yet, then create the doodle and add it to the doodle list of doodles from the teacher.
-Step 4. If the teacher already defined a doodle for the exam, the new doodle should overwrite the old one.
-Step 5. If another teacher already claimed the exam identifier, the server should return the message "id-taken".
-
--}
 handleParsedRequest (SetDoodleRequest user password (AS1.MyDoodle doodle slots)) (State ux dx) = do
     atomically (do {
         users <- readTVar ux                                    -- Read the users
@@ -223,29 +211,20 @@ handleParsedRequest (PreferRequest user pass doodle slot) (State ux dx) = do
                 return "wrong-login"
     })
 
-
-
--- //TODO enable a user to get the current best exam schedule
--- Use sequence for this, it combines all the stff together 1 by 1.
--- For every thing, run a check and accept/reject acoordingly
--- Check all the accepted ones and seek the most optimal one???
--- https://stackoverflow.com/questions/14471876/with-a-list-of-lists-combine-each-element-of-each-list-with-each-other-element
 handleParsedRequest (ExamScheduleRequest user pass) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
         ;doodles <- readTVar dx
-        ;let doodleTaggedSlots = convertSlots .  convertToValues $ Map.toList doodles
-             schedule = optimalTimeSlot doodleTaggedSlots $ convertToValues $ Map.toList users
-             --count = map \x foldr countStudents 0 x schedule
-            -- xx = zip count schedule
+        ;let (User n p xs r) = fromJust(Map.lookup user users)
+        ;if User n p xs r == User user pass xs r
+            then do
+                let doodleTaggedSlots = convertSlots .  convertToValues $ Map.toList doodles
+                    schedule = optimalTimeSlot doodleTaggedSlots $ convertToValues $ Map.toList users
 
-
-
-        ;return  (show schedule)
+                if null schedule then return "no-possible-exam-schedule" else return ("ok " ++ show schedule)
+        else do
+            return "wrong-login"
         })
-
-
-
 
 handleParsedRequest InvalidRequest s = return "invalid request"
 
@@ -275,7 +254,7 @@ optimalTimeSlot::[[(String, ZonedTime, ZonedTime, [String])]] ->  [User] -> [(St
 optimalTimeSlot doodles users = let teachers = filter (hasRole TEACHER) users
                                     students = filter (hasRole STUDENT) users
                                     acceptedschedules = [schedule | schedule  <-  sequence doodles, teachersDoNotOverlap teachers schedule, studentsDoNotOverlap students schedule] -- ADD FILTER
-                        in snd . maximum $ zip (map (foldr countStudents 0 ) acceptedschedules) acceptedschedules
+                        in if null acceptedschedules then [] else snd . maximum $ zip (map (foldr countStudents 0 ) acceptedschedules) acceptedschedules
 
 -- For every teacher (map over the teachers) - get all their tuples - see if there is no overlap between any element.
 teachersDoNotOverlap::[User] -> [(String, ZonedTime, ZonedTime, [String])] -> Bool
@@ -290,15 +269,23 @@ teacherGivesExam schedule (User name _ exams TEACHER) = [(n, s, e, p) | (n, s, e
 
 
 studentPrefersExam::[(String, ZonedTime, ZonedTime, [String])] -> User -> [(String, ZonedTime, ZonedTime, [String])]
-studentPrefersExam schedule (User name _ exams STUDENT) = [(n, s, e, p) | (n, s, e, p) <- schedule, n `elem` exams, name `elem` p]
+studentPrefersExam schedule (User name _ exams STUDENT) = [(n, s, e, p) | (n, s, e, p) <- schedule, name `elem` p || n `elem` exams]
 
 
 hasRole::Role -> User -> Bool
 hasRole role (User _ _ _ r) = r == role
 
 checkNoOverlaps::[(String, ZonedTime, ZonedTime, [String])] -> Bool
-checkNoOverlaps exams = let overlapresults =  [ AS1.doesNotOverlap s1 e1 s2 e2 | (n2, s1, e1, p2) <- exams, (n2, s2, e2, p2) <- exams, (n2, s1, e1, p2) < (n2, s2, e2, p2)]
+checkNoOverlaps exams = let overlapresults =  [ doesnotoverlap e1 e2 | e1 <- exams, e2 <- exams, e1 < e2]
                         in and overlapresults
+
+checkNoOverlaps'::[(String, ZonedTime, ZonedTime, [String])] -> [Bool]
+checkNoOverlaps' exams = let overlapresults =  [ doesnotoverlap e1 e2 | e1 <- exams, e2 <- exams, e1 < e2]
+                        in overlapresults
+
+
+doesnotoverlap (n1, s1, e1, p1) (n2, s2, e2, p2) = AS1.doesNotOverlap s1 e1 s2 e2
+
 -- Code is modified from starting point at https://hackage.haskell.org/package/network-3.1.2.7/docs/Network-Socket.html
 main :: IO ()
 main = runTCPServer Nothing "3000" talk
@@ -322,7 +309,8 @@ handleRequest msg s state=
 -- from the "network-run" package.
 runTCPServer :: Maybe HostName -> ServiceName -> (Socket -> State -> IO a) -> IO a
 runTCPServer mhost port server = withSocketsDo $ do
-    state <- newState "admin" "1234"
+    args <- getArgs
+    state <- newState (head args) (head $ tail args)
     addr <- resolve
     --state <- atomically (return newTVar $ Map.insert "admin" "1234" Map.empty)
     E.bracket (open addr) close (loop state)  -- Control.Exception
@@ -359,8 +347,6 @@ doodle = "Cooking [2022-12-25T16:00:00+01:00/2022-12-25T18:00:00+01:00, 2022-12-
 date="2022-12-25T16:00:00+01:00"
 
 
-
-
 year::Parser String
 year = count 4 digit
 
@@ -378,7 +364,6 @@ minutes = count 2 digit
 
 seconds::Parser String
 seconds = count 2 digit
-
 
 --"yyyy-mm-ddThh:mm:ss[.sss]±hh:mm "
 zonedTimeParser::Parser ZonedTime
@@ -546,17 +531,6 @@ getRequest::Parser Request
 getRequest =
     parseRequest
 
-{-
-doodleParser::Parser (MyDoodle ZonedTime)
-doodleParser = do
-    doodlename <- word
-    timeslots <- timeslotsParser
-    return (MyDoodle doodlename timeslots)
-
-timeslotsParser::Parser [Timeslot]
-timeslotsParser = try singleTime
--}
-
 -- Testing code
 
 test1 :: Either ParseError Request
@@ -588,8 +562,3 @@ testsuite = do
           print test6
           print test7
           print test8
-
-
-
-
--- fromRight [] $ parse slots "" "[2022-12-25T18:00:00+01:00/2022-12-25T20:00:00+01:00,2022-12-25T16:00:00+01:00/2022-12-25T18:00:00+01:00]"
