@@ -1,41 +1,73 @@
 -- Echo server program
-{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE BlockArguments #-} --using a do block as an argument to a function 
 module Main (main) where
 
 -- imports
-import Debug.Trace
 import qualified Assignment1 as AS1
-import Control.Concurrent
+import Control.Concurrent ( forkFinally, forkIO )
 import Control.Concurrent.STM
+    ( atomically, newTVar, readTVar, writeTVar, TVar )
 import qualified Control.Exception as E
 import Control.Monad (unless, forever, void)
 import qualified Data.ByteString as S
 import Network.Socket
+    ( setCloseOnExecIfNeeded,
+      defaultHints,
+      getAddrInfo,
+      openSocket,
+      withSocketsDo,
+      setSocketOption,
+      gracefulClose,
+      accept,
+      bind,
+      listen,
+      close,
+      withFdSocket,
+      AddrInfo(addrFlags, addrSocketType, addrAddress),
+      AddrInfoFlag(AI_PASSIVE),
+      HostName,
+      ServiceName,
+      SocketOption(ReuseAddr),
+      Socket,
+      SocketType(Stream) )
 import Network.Socket.ByteString (recv, sendAll, send)
-import Text.Parsec hiding (State, token)
-import Text.Parsec.String
+import Text.Parsec
+    ( alphaNum,
+      digit,
+      noneOf,
+      oneOf,
+      spaces,
+      string,
+      count,
+      many1,
+      (<|>),
+      parse,
+      try,
+      ParseError )
+import Text.Parsec.String ( Parser )
 import Text.Read (Lexeme(String))
-import System.IO
-import Data.Either
-import System.Environment
+import System.IO ()
+import Data.Either ( fromRight )
+import System.Environment ( getArgs )
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as Map
-import Data.Maybe
-import Data.List
-import Data.Word
+import Data.Maybe ( fromJust, isNothing )
+import Data.List ( elemIndex, sort )
+import Data.Word ()
 import Data.Bool (Bool)
 import GHC.Conc (writeTVar, newTVar)
-import System.Random
-import Data.Time.LocalTime
+import System.Random ( getStdGen, newStdGen, Random(randomRs) )
+import Data.Time.LocalTime ( ZonedTime )
 import Data.Time (UTCTime)
-import Data.Time.Format.ISO8601
-import Language.Haskell.TH (doublePrimL)
+import Data.Time.Format.ISO8601 ()
 import Doodle (Doodle(toggle))
 import Assignment1 (Timeslot(Timeslot))
-import Data.Function (on)
 
+-- COMMENTS ON THE PROJECT AS A WHOLE
+--"yyyy-mm-ddThh:mm:ss±hh:mm" is the format that will be transformed to ZonedTime
+-- Some code in assignment1.hs modified from the code from assingment one so that I was able to recycle quite a bit of code.
 
--- EXTRA DATA TYPES USED IN THE ASSIGNMENT
+-- Data types
 data User = User String String [String] Role deriving (Eq, Show)
 data Role = STUDENT | TEACHER | ADMIN deriving (Eq, Show)
 data State = State (TVar (Map.Map String User)) (TVar (Map.Map String (AS1.MyDoodle ZonedTime)))
@@ -49,7 +81,7 @@ data Request =  AddTeacherRequest String String String
                 | ExamScheduleRequest String String
                 | InvalidRequest                deriving (Show)
 
--- Data type to easily print - if I had more time I would change every
+-- Data type to easily print an exam
 data Exam = Exam String ZonedTime ZonedTime [String]
 instance Show Exam where
     show (Exam name starttime endtime participants) = name ++ ": " ++ show starttime ++ "/" ++ show endtime
@@ -65,13 +97,17 @@ newState username password = atomically (do {
                                 ;return (State users doodles)
 })
 
--- Creates a new password -- //TODO needs to produce alphanumerical characters
+-- Creates a new password --
 getpassword::IO [Char]
 getpassword = do
     gen <- getStdGen
     newStdGen
-    return (take 4 $ randomRs ('a','z') gen :: [Char])
+    return (take 4 $ randomRs ('A','z') gen :: [Char])
 
+-- Handles the parsed requests using STM. One procedure for every kind of request.
+-- The layout is quite the same for every transaction. We read the data we need from state, modify it and write it back
+
+-- handle add-teacher
 handleParsedRequest::Request -> State -> IO String
 handleParsedRequest (AddTeacherRequest admin password teacher) (State ux dx) = do
     newpass <- getpassword
@@ -84,12 +120,13 @@ handleParsedRequest (AddTeacherRequest admin password teacher) (State ux dx) = d
                     then do
                         return "id-taken"
                     else do
-                        writeTVar ux $ Map.insert teacher (User teacher newpass [] TEACHER) users
+                        writeTVar ux $ Map.insert teacher (User teacher newpass [] TEACHER) users -- Add new teacher to the map of users
                         return ("ok " ++ newpass)
             else
                 return "wrong-login"
 })
 
+-- handle add-student
 handleParsedRequest (AddStudentRequest admin password student) (State ux dx) = do
     newpass <- getpassword
     atomically (do {
@@ -101,41 +138,43 @@ handleParsedRequest (AddStudentRequest admin password student) (State ux dx) = d
                     then do
                         return "id-taken"
                     else do
-                        writeTVar ux $ Map.insert student (User student newpass [] STUDENT) users
+                        writeTVar ux $ Map.insert student (User student newpass [] STUDENT) users -- Add new student to the map of users
                         return ("ok " ++ newpass)
             else
                 return "wrong-login"
 })
 
+-- handle change-password
 handleParsedRequest (ChangePasswordRequest user password newpass) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
         ;let (User n p xs r) = fromJust(Map.lookup user users)
         ;if User n p xs r == User user password xs r
             then do
-                writeTVar ux $ Map.insert n (User n newpass xs r) users
+                writeTVar ux $ Map.insert n (User n newpass xs r) users --Update user with new password
                 return "ok"
             else
                 return "wrong-login"
 })
 
+-- handle set-doodle
 handleParsedRequest (SetDoodleRequest user password (AS1.MyDoodle doodle slots)) (State ux dx) = do
     atomically (do {
-        users <- readTVar ux                                    -- Read the users
-        ;doodles <- readTVar dx                                 -- Read the doodle
-        ;let (User n p xs r) = fromJust(Map.lookup user users)  -- Get the user
-        ;if User n p xs r == User user password xs TEACHER       -- If the user login checks out
+        users <- readTVar ux
+        ;doodles <- readTVar dx
+        ;let (User n p xs r) = fromJust(Map.lookup user users)
+        ;if User n p xs r == User user password xs TEACHER -- If the user is a teacher
             then do
-                if isNothing (Map.lookup doodle doodles) -- The doodle does not exist yet, then create the doodle and att it to the doodle list of doodles from the teacher
+                if isNothing (Map.lookup doodle doodles)    -- If the doodle does not exist yet
                     then do
                         writeTVar ux $ Map.insert n (User n p (doodle:xs) r) users
                         writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle (sort slots)) doodles
                         return $ "ok"
-                    else do -- The doodle does exist. Check if it is from the teacher. If it is, overwrite, else 
+                    else do
                         let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
-                        if title `elem` xs
+                        if title `elem` xs      -- If it exists and the user is the creator of the original one, overwrite it.
                             then do
-                                writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle (sort slots)) doodles -- TODO populate slots
+                                writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle (sort slots)) doodles
                                 return "ok"
                             else do
                                 return "id-taken"
@@ -143,9 +182,7 @@ handleParsedRequest (SetDoodleRequest user password (AS1.MyDoodle doodle slots))
                 return "wrong-login"
 })
 
-
--- GetDoodleRequest: enables the user to change get a doodle.
--- TODO proper timeslot formatting
+-- handle get-doodle
 handleParsedRequest (GetDoodleRequest user password doodle) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
@@ -153,18 +190,17 @@ handleParsedRequest (GetDoodleRequest user password doodle) (State ux dx) = do
         ;let (User n p xs r) = fromJust(Map.lookup user users)
         ;if User n p xs r == User user password xs r
             then do
-                if isNothing (Map.lookup doodle doodles)
+                if isNothing (Map.lookup doodle doodles)    -- If the doodle does not exist
                     then do
                         return "no-such-id"
-                    else do
+                    else do -- The doodle does exist - fetch it
                         let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
                         return $ "ok " ++ show slots
             else
                 return "wrong-login"
 })
 
--- Subscribe to an exam.
--- TODO can be subscribed mutliple times to the same exam
+-- handle subscribe
 handleParsedRequest (SubscribeRequest user password doodle) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
@@ -187,8 +223,7 @@ handleParsedRequest (SubscribeRequest user password doodle) (State ux dx) = do
                 return "wrong-login"
 })
 
--- //TODO prefer an exam slot
--- GET THE INDEX AND CALL UPDATE FROM THE TYPE CLASS
+-- handle prefer-doodle
 handleParsedRequest (PreferRequest user pass doodle slot) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
@@ -201,17 +236,23 @@ handleParsedRequest (PreferRequest user pass doodle slot) (State ux dx) = do
                         if isNothing (Map.lookup doodle doodles)
                             then do
                                 return "no-such-id"
-                            else do
+                            else do -- check if the slot exists
                                 let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
-                                    idx = fromJust $ elemIndex slot slots
-                                writeTVar dx $ Map.insert doodle  (toggle user idx (AS1.MyDoodle title (AS1.removeParticipantFromAllSlots user slots))) doodles
-                                return "ok"
+                                if isNothing (elemIndex slot slots)
+                                    then do
+                                        return "no-such-slot"
+                                    else do
+                                        let idx = fromJust $ elemIndex slot slots
+                                        writeTVar dx $ Map.insert doodle  (toggle user idx (AS1.MyDoodle title (AS1.removeParticipantFromAllSlots user slots))) doodles
+                                        return "ok"
+
                     else do
-                        return "not subscribed"
+                        return "not-subscribed"
             else do
                 return "wrong-login"
     })
 
+-- handle exam-schedule
 handleParsedRequest (ExamScheduleRequest user pass) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
@@ -219,23 +260,27 @@ handleParsedRequest (ExamScheduleRequest user pass) (State ux dx) = do
         ;let (User n p xs r) = fromJust(Map.lookup user users)
         ;if User n p xs r == User user pass xs r
             then do
-                let doodleTaggedSlots = convertSlots .  convertToValues $ Map.toList doodles
-                    schedule = optimalTimeSlot doodleTaggedSlots $ convertToValues $ Map.toList users
+                let doodleTaggedSlots = convertSlots .  convertToValues $ Map.toList doodles            -- Convert doodles to indivual exam tuples with their timeslots
+                    schedule = optimalTimeSlot doodleTaggedSlots $ convertToValues $ Map.toList users   -- Get the most optimal one
 
                 if null schedule then return "no-possible-exam-schedule" else return ("ok { " ++ formatExams (map convertToExams schedule) ++ " }")
         else do
             return "wrong-login"
         })
-
+-- Invalid request - not part of the procoticol but it serves to let the client know there was an invalid request
 handleParsedRequest InvalidRequest s = return "invalid request"
 
+-- This logic handles the formation of the exam-schedules.
+countStudents :: Foldable t => (a1, b, c, t a2) -> Int -> Int
 countStudents (n, s, e, p) c = c + length p
 
-formatExams::[Exam] -> String 
+-- format the exam to properly display the schedule to the user
+formatExams::[Exam] -> String
 formatExams [] = ""
 formatExams [exam] = show exam
 formatExams (x:xs) = show x ++ ", " ++ formatExams xs
 
+-- Turn the exam tuples into exam types 
 convertToExams :: (String, ZonedTime, ZonedTime, [String]) -> Exam
 convertToExams (n, s, e, p) = Exam n s e p
 
@@ -252,28 +297,31 @@ getSlots (AS1.MyDoodle title slots) = map (tagSlots title) slots
 tagSlots::String -> Timeslot ZonedTime -> (String, ZonedTime, ZonedTime, [String])
 tagSlots tag (AS1.Timeslot s e p) = (tag, s, e, p)
 
--- Eerste filter: voor elke leerkracht, verzamel alle timeslots van de examens die hij afneemt, is er een overlap -- FAAL
--- Tweede filter: voor elke student, verzamel alle timeslots waar die student aan deelneemt, is er een overlap - faal
--- Lijst met goede schedules - Kies de optimale (die waar het meeste studenten aan deelnemen in totaal)
--- THINK ABOUT OVERLAP, DO WE REALLY NEED TO DO THIS IN TWO STEPS??? CHECK IF THERE IS OVERLAP FOR ANYONE
--- I THINK SO, TEACHERS ORGANISE IT, MAYBE ADD ORGANISE TAG SO EVERYTHING IS IN THE FORMAT AND NO NEED TO LOOK STUFF UP??
--- TODO CHGANGE TO RETURN OPTIMAL ONE
+-- Calculates the most optimal exam-eschedule.
+-- The main idea is to generate all the possible exam schedules and then filter those good ones out so that we end up with a list of accepted schedules.
+-- From that list of accepted schedules, we look for the optimal one. A (most) optimal schedule is one where the preferred slots are maximized.
 optimalTimeSlot::[[(String, ZonedTime, ZonedTime, [String])]] ->  [User] -> [(String, ZonedTime, ZonedTime, [String])]
 optimalTimeSlot doodles users = let teachers = filter (hasRole TEACHER) users
                                     students = filter (hasRole STUDENT) users
-                                    acceptedschedules = [schedule | schedule  <-  sequence doodles, teachersDoNotOverlap teachers schedule, studentsDoNotOverlap students schedule] -- ADD FILTER
+                                    acceptedschedules = [schedule | schedule  <-  sequence doodles, teachersDoNotOverlap students schedule teachers , studentsDoNotOverlap schedule students ]
                         in if null acceptedschedules then [] else snd . maximum $ zip (map (foldr countStudents 0 ) acceptedschedules) acceptedschedules
 
--- For every teacher (map over the teachers) - get all their tuples - see if there is no overlap between any element.
-teachersDoNotOverlap::[User] -> [(String, ZonedTime, ZonedTime, [String])] -> Bool
-teachersDoNotOverlap teachers schedule = all (checkNoOverlaps . teacherGivesExam  schedule) teachers
 
-studentsDoNotOverlap::[User] -> [(String, ZonedTime, ZonedTime, [String])] -> Bool
-studentsDoNotOverlap students schedule = and . map checkNoOverlaps $ map (studentPrefersExam schedule) students
+teachersDoNotOverlap::[User] -> [(String, ZonedTime, ZonedTime, [String])] -> [User] -> Bool
+teachersDoNotOverlap students schedule = all (checkNoOverlaps . teacherGivesExam students schedule)
+
+studentsDoNotOverlap::[(String, ZonedTime, ZonedTime, [String])] -> [User] ->  Bool
+studentsDoNotOverlap schedule = all (checkNoOverlaps . studentPrefersExam schedule)
 
 
-teacherGivesExam::[(String, ZonedTime, ZonedTime, [String])] -> User -> [(String, ZonedTime, ZonedTime, [String])]
-teacherGivesExam schedule (User name _ exams TEACHER) = [(n, s, e, p) | (n, s, e, p) <- schedule, n `elem` exams]
+teacherGivesExam::[User] -> [(String, ZonedTime, ZonedTime, [String])] -> User -> [(String, ZonedTime, ZonedTime, [String])]
+teacherGivesExam students schedule (User name _ exams TEACHER) = [(n, s, e, p) | (n, s, e, p) <- schedule, n `elem` exams]
+
+studentsAreSubscribedToExam::[User]->String->Bool
+studentsAreSubscribedToExam students exam = any (studentSubscribedToExam exam) students
+
+studentSubscribedToExam::String->User->Bool
+studentSubscribedToExam exam (User _ _ subs _) = exam `elem` subs
 
 
 studentPrefersExam::[(String, ZonedTime, ZonedTime, [String])] -> User -> [(String, ZonedTime, ZonedTime, [String])]
@@ -287,14 +335,10 @@ checkNoOverlaps::[(String, ZonedTime, ZonedTime, [String])] -> Bool
 checkNoOverlaps exams = let overlapresults =  [ doesnotoverlap e1 e2 | e1 <- exams, e2 <- exams, e1 < e2]
                         in and overlapresults
 
-checkNoOverlaps'::[(String, ZonedTime, ZonedTime, [String])] -> [Bool]
-checkNoOverlaps' exams = let overlapresults =  [ doesnotoverlap e1 e2 | e1 <- exams, e2 <- exams, e1 < e2]
-                        in overlapresults
-
-
+doesnotoverlap :: Ord t => (a1, t, t, d1) -> (a2, t, t, d2) -> Bool
 doesnotoverlap (n1, s1, e1, p1) (n2, s2, e2, p2) = AS1.doesNotOverlap s1 e1 s2 e2
 
--- Code is modified from starting point at https://hackage.haskell.org/package/network-3.1.2.7/docs/Network-Socket.html
+-- The server code is modifed from https://hackage.haskell.org/package/network-3.1.2.7/docs/Network-Socket.html which as used as starting point
 main :: IO ()
 main = runTCPServer Nothing "3000" talk
   where
@@ -304,13 +348,11 @@ main = runTCPServer Nothing "3000" talk
         talk s state
 
 -- Handles the request that is accepted on the port
--- TODO sends to all, change to receiver
 handleRequest msg s state=
         unless (S.null msg) $ do
-            print msg
-
+            print msg -- Print to the server console for debugging purposes
             -- Parse the request, if we do not have a correct parsing we return and invalidrequest
-            let request = fromRight InvalidRequest $ parse getRequest "" $ BS.unpack msg -- We use the let so that we can pure code, allows us to use the parser monad
+            let request = fromRight InvalidRequest $ parse getRequest "" $ BS.unpack msg -- We use the let so that we can pure code, allows us to use the parser monad within the IO monad
             response <- handleParsedRequest request state
             sendAll s $ BS.pack response
 
@@ -318,9 +360,8 @@ handleRequest msg s state=
 runTCPServer :: Maybe HostName -> ServiceName -> (Socket -> State -> IO a) -> IO a
 runTCPServer mhost port server = withSocketsDo $ do
     args <- getArgs
-    state <- newState (head args) (head $ tail args)
+    state <- newState (head args) (head $ tail args) -- Command line arguments
     addr <- resolve
-    --state <- atomically (return newTVar $ Map.insert "admin" "1234" Map.empty)
     E.bracket (open addr) close (loop state)  -- Control.Exception
   where
     resolve = do
@@ -337,23 +378,11 @@ runTCPServer mhost port server = withSocketsDo $ do
         return sock
     loop state sock  = forever $ E.bracketOnError (accept sock) (close . fst)
         $ \(conn, _peer) -> void $
-            -- 'forkFinally' alone is unlikely to fail thus leaking @conn@,
-            -- but 'E.bracketOnError' above will be necessary if some
-            -- non-atomic setups (e.g. spawning a subprocess to handle
-            -- @conn@) before proper cleanup of @conn@ is your case
             forkFinally (server conn state) (const $ gracefulClose conn 5000)
 
+-- END of the modified code.
 
--- Create the data type request to differentiate between different request
-
-type Username = String
-type Password = String
-
-
-
-doodle = "Cooking [2022-12-25T16:00:00+01:00/2022-12-25T18:00:00+01:00, 2022-12-25T18:00:00 +01:00/2022-12-25T20:00:00+01:00]"
-date="2022-12-25T16:00:00+01:00"
-
+-- PARSER CODE
 
 year::Parser String
 year = count 4 digit
@@ -373,7 +402,7 @@ minutes = count 2 digit
 seconds::Parser String
 seconds = count 2 digit
 
---"yyyy-mm-ddThh:mm:ss[.sss]±hh:mm "
+--"yyyy-mm-ddThh:mm:ss±hh:mm" is the format that will be transformed to ZonedTime
 zonedTimeParser::Parser ZonedTime
 zonedTimeParser = do
     year <- year
@@ -428,7 +457,7 @@ multipleslots = do
 slots::Parser [AS1.Timeslot ZonedTime]
 slots = token $ multipleslots
 
--- Helper functions, taken from Solutions12.hs from the WPO. They take care of whitespaces
+-- Taken from Solutions12.hs from the WPO. They take care of whitespaces
 token :: Parser a -> Parser a
 token p = try $ spaces >> p
 
@@ -437,18 +466,10 @@ keyword = token . string
 
 symbol = keyword
 
-
- --do
- --   command <- keyword "add-teacher"
-  --  username <- token $ many1 letter :: Parser String
-   -- symbol "@"
-    --password <- token $ many1 alphaNum
-    --name <- token $ many1 letter
-    --return $ AddTeacherRequest username password name
-
 word = token $ many1 alphaNum
 anyword = token $ many1 $ noneOf " "
 
+-- With more time, I would've extracted the authentication part out of the parser so that it would be its own thing can be plugged in like Lego. 
 -- add-teacher parser
 addTeacherRequestParser::Parser Request
 addTeacherRequestParser = do
@@ -540,7 +561,6 @@ getRequest =
     parseRequest
 
 -- Testing code
-
 test1 :: Either ParseError Request
 test1 = parse getRequest "" "add-teacher admin@1234 walter"
 test2 :: Either ParseError Request
