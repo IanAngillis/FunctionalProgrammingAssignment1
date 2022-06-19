@@ -54,6 +54,7 @@ data Exam = Exam String ZonedTime ZonedTime [String]
 instance Show Exam where
     show (Exam name starttime endtime participants) = name ++ ": " ++ show starttime ++ "/" ++ show endtime
 
+
 -- Create a new empty state when the server boots
 newState::String -> String  -> IO State
 newState username password = atomically (do {
@@ -221,7 +222,7 @@ handleParsedRequest (ExamScheduleRequest user pass) (State ux dx) = do
                 let doodleTaggedSlots = convertSlots .  convertToValues $ Map.toList doodles
                     schedule = optimalTimeSlot doodleTaggedSlots $ convertToValues $ Map.toList users
 
-                if null schedule then return "no-possible-exam-schedule" else return ("ok " ++ show schedule)
+                if null schedule then return "no-possible-exam-schedule" else return ("ok { " ++ formatExams (map convertToExams schedule) ++ " }")
         else do
             return "wrong-login"
         })
@@ -230,6 +231,13 @@ handleParsedRequest InvalidRequest s = return "invalid request"
 
 countStudents (n, s, e, p) c = c + length p
 
+formatExams::[Exam] -> String 
+formatExams [] = ""
+formatExams [exam] = show exam
+formatExams (x:xs) = show x ++ ", " ++ formatExams xs
+
+convertToExams :: (String, ZonedTime, ZonedTime, [String]) -> Exam
+convertToExams (n, s, e, p) = Exam n s e p
 
 convertToValues :: [(a, b)] -> [b]
 convertToValues = map snd
