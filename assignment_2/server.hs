@@ -113,17 +113,18 @@ handleParsedRequest (AddTeacherRequest admin password teacher) (State ux dx) = d
     newpass <- getpassword
     atomically (do {
         users <- readTVar ux
-        ;let (User n p xs r) = fromJust(Map.lookup admin users)
-        ;if User n p xs r == User admin password xs ADMIN
-            then do
-                if Map.member teacher users
-                    then do
-                        return "id-taken"
-                    else do
-                        writeTVar ux $ Map.insert teacher (User teacher newpass [] TEACHER) users -- Add new teacher to the map of users
-                        return ("ok " ++ newpass)
-            else
-                return "wrong-login"
+        ;case Map.lookup admin users of Nothing -> do return "wrong-login"
+                                        Just (User n p xs r) -> do
+                                            if User n p xs r == User admin password xs ADMIN
+                                                then do
+                                                    if Map.member teacher users
+                                                        then do
+                                                            return "id-taken"
+                                                        else do
+                                                            writeTVar ux $ Map.insert teacher (User teacher newpass [] TEACHER) users -- Add new teacher to the map of users
+                                                            return ("ok " ++ newpass)
+                                                else
+                                                    return "wrong-login"
 })
 
 -- handle add-student
@@ -131,30 +132,32 @@ handleParsedRequest (AddStudentRequest admin password student) (State ux dx) = d
     newpass <- getpassword
     atomically (do {
         users <- readTVar ux
-        ;let (User n p xs r) = fromJust (Map.lookup admin users)
-         ;if User n p xs r == User admin password xs ADMIN
-            then do
-                if Map.member student users
-                    then do
-                        return "id-taken"
-                    else do
-                        writeTVar ux $ Map.insert student (User student newpass [] STUDENT) users -- Add new student to the map of users
-                        return ("ok " ++ newpass)
-            else
-                return "wrong-login"
+       ;case Map.lookup admin users of  Nothing -> do return "wrong-login"
+                                        Just (User n p xs r) -> do
+                                            if User n p xs r == User admin password xs ADMIN
+                                                then do
+                                                    if Map.member student users
+                                                        then do
+                                                            return "id-taken"
+                                                        else do
+                                                            writeTVar ux $ Map.insert student (User student newpass [] STUDENT) users -- Add new student to the map of users
+                                                            return ("ok " ++ newpass)
+                                                else
+                                                    return "wrong-login"
 })
 
 -- handle change-password
 handleParsedRequest (ChangePasswordRequest user password newpass) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
-        ;let (User n p xs r) = fromJust(Map.lookup user users)
-        ;if User n p xs r == User user password xs r
-            then do
-                writeTVar ux $ Map.insert n (User n newpass xs r) users --Update user with new password
-                return "ok"
-            else
-                return "wrong-login"
+       ;case Map.lookup user users of  Nothing -> do return "wrong-login"
+                                       Just (User n p xs r) -> do
+                                            if User n p xs r == User user password xs r
+                                                then do
+                                                    writeTVar ux $ Map.insert n (User n newpass xs r) users --Update user with new password
+                                                    return "ok"
+                                                else
+                                                    return "wrong-login"
 })
 
 -- handle set-doodle
@@ -162,24 +165,23 @@ handleParsedRequest (SetDoodleRequest user password (AS1.MyDoodle doodle slots))
     atomically (do {
         users <- readTVar ux
         ;doodles <- readTVar dx
-        ;let (User n p xs r) = fromJust(Map.lookup user users)
-        ;if User n p xs r == User user password xs TEACHER -- If the user is a teacher
-            then do
-                if isNothing (Map.lookup doodle doodles)    -- If the doodle does not exist yet
-                    then do
-                        writeTVar ux $ Map.insert n (User n p (doodle:xs) r) users
-                        writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle (sort slots)) doodles
-                        return $ "ok"
-                    else do
-                        let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
-                        if title `elem` xs      -- If it exists and the user is the creator of the original one, overwrite it.
-                            then do
-                                writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle (sort slots)) doodles
-                                return "ok"
-                            else do
-                                return "id-taken"
-            else
-                return "wrong-login"
+        ;case Map.lookup user users of  Nothing -> do return "wrong-login"
+                                        Just (User n p xs r) -> do
+                                            if User n p xs r == User user password xs TEACHER -- If the user is a teacher
+                                                then do
+                                                    case Map.lookup doodle doodles of Nothing  -> do
+                                                                                                    writeTVar ux $ Map.insert n (User n p (doodle:xs) r) users
+                                                                                                    writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle (sort slots)) doodles
+                                                                                                    return "ok"
+                                                                                      Just (AS1.MyDoodle title slots) -> do
+                                                                                                        if title `elem` xs      -- If it exists and the user is the creator of the original one, overwrite it.
+                                                                                                            then do
+                                                                                                                writeTVar dx $ Map.insert doodle (AS1.MyDoodle doodle (sort slots)) doodles
+                                                                                                                return "ok"
+                                                                                                            else do
+                                                                                                                return "id-taken"
+                                                else
+                                                    return "wrong-login"
 })
 
 -- handle get-doodle
@@ -187,17 +189,16 @@ handleParsedRequest (GetDoodleRequest user password doodle) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
         ;doodles <- readTVar dx
-        ;let (User n p xs r) = fromJust(Map.lookup user users)
-        ;if User n p xs r == User user password xs r
-            then do
-                if isNothing (Map.lookup doodle doodles)    -- If the doodle does not exist
-                    then do
-                        return "no-such-id"
-                    else do -- The doodle does exist - fetch it
-                        let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
-                        return $ "ok " ++ show slots
-            else
-                return "wrong-login"
+        ;case Map.lookup user users of  Nothing -> do return "wrong-login"
+                                        Just (User n p xs r) -> do
+                                            if User n p xs r == User user password xs r
+                                                then do
+                                                     case Map.lookup doodle doodles of  Nothing                         -> do
+                                                                                                                            return "no-such-id"
+                                                                                        Just (AS1.MyDoodle title slots) -> do
+                                                                                                                            return $ "ok " ++ show slots
+                                                else
+                                                    return "wrong-login"
 })
 
 -- handle subscribe
@@ -205,22 +206,20 @@ handleParsedRequest (SubscribeRequest user password doodle) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
         ;doodles <- readTVar dx
-        ;let (User n p xs r) = fromJust(Map.lookup user users)
-        ;if User n p xs r == User user password xs STUDENT
-            then do
-                if isNothing (Map.lookup doodle doodles)
-                    then do
-                        return "no-such-id"
-                    else do
-                        let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
-                        if title `elem` xs
-                            then do
-                                return "ok"
-                            else do
-                                writeTVar ux $ Map.insert n (User n p (title:xs) r) users
-                                return "ok"
-            else
-                return "wrong-login"
+         ;case Map.lookup user users of  Nothing -> do return "wrong-login"
+                                         Just (User n p xs r) -> do
+                                            if User n p xs r == User user password xs STUDENT
+                                                then do
+                                                    case Map.lookup doodle doodles of   Nothing                         -> do return "no-such-id"
+                                                                                        Just (AS1.MyDoodle title slots) -> do
+                                                                                                                            if title `elem` xs
+                                                                                                                                then do
+                                                                                                                                    return "ok"
+                                                                                                                                else do
+                                                                                                                                    writeTVar ux $ Map.insert n (User n p (title:xs) r) users
+                                                                                                                                    return "ok"       
+                                                else
+                                                    return "wrong-login"
 })
 
 -- handle prefer-doodle
@@ -228,28 +227,22 @@ handleParsedRequest (PreferRequest user pass doodle slot) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
         ;doodles <- readTVar dx
-        ;let (User n p xs r) = fromJust(Map.lookup user users)
-        ;if User n p xs r == User user pass xs STUDENT
-            then do
-                if doodle `elem` xs --Is subscribed to doodle
-                    then do
-                        if isNothing (Map.lookup doodle doodles)
-                            then do
-                                return "no-such-id"
-                            else do -- check if the slot exists
-                                let (AS1.MyDoodle title slots) = fromJust $ Map.lookup doodle doodles
-                                if isNothing (elemIndex slot slots)
-                                    then do
-                                        return "no-such-slot"
-                                    else do
-                                        let idx = fromJust $ elemIndex slot slots
-                                        writeTVar dx $ Map.insert doodle  (toggle user idx (AS1.MyDoodle title (AS1.removeParticipantFromAllSlots user slots))) doodles
-                                        return "ok"
-
-                    else do
-                        return "not-subscribed"
-            else do
-                return "wrong-login"
+         ;case Map.lookup user users of  Nothing -> do return "wrong-login"
+                                         Just (User n p xs r) -> do
+                                            if User n p xs r == User user pass xs STUDENT
+                                                then do
+                                                    if doodle `elem` xs --Is subscribed to doodle
+                                                        then do
+                                                            case Map.lookup doodle doodles of   Nothing                         -> do  return "no-such-id"
+                                                                                                Just (AS1.MyDoodle title slots) -> do
+                                                                                                                                    case elemIndex slot slots of    Nothing     -> return "no-such-slot"
+                                                                                                                                                                    Just idx    -> do
+                                                                                                                                                                                     writeTVar dx $ Map.insert doodle  (toggle user idx (AS1.MyDoodle title (AS1.removeParticipantFromAllSlots user slots))) doodles
+                                                                                                                                                                                     return "ok"
+                                                        else do
+                                                            return "not-subscribed"
+                                                else do
+                                                    return "wrong-login"
     })
 
 -- handle exam-schedule
@@ -257,15 +250,15 @@ handleParsedRequest (ExamScheduleRequest user pass) (State ux dx) = do
     atomically (do {
         users <- readTVar ux
         ;doodles <- readTVar dx
-        ;let (User n p xs r) = fromJust(Map.lookup user users)
-        ;if User n p xs r == User user pass xs r
-            then do
-                let doodleTaggedSlots = convertSlots .  convertToValues $ Map.toList doodles            -- Convert doodles to indivual exam tuples with their timeslots
-                    schedule = optimalTimeSlot doodleTaggedSlots $ convertToValues $ Map.toList users   -- Get the most optimal one
-
-                if null schedule then return "no-possible-exam-schedule" else return ("ok { " ++ formatExams (map convertToExams schedule) ++ " }")
-        else do
-            return "wrong-login"
+        ;case Map.lookup user users of  Nothing -> do return "wrong-login"
+                                        Just (User n p xs r) -> do
+                                            if User n p xs r == User user pass xs r
+                                                then do
+                                                    let doodleTaggedSlots = convertSlots .  convertToValues $ Map.toList doodles            -- Convert doodles to indivual exam tuples with their timeslots
+                                                        schedule = optimalTimeSlot doodleTaggedSlots $ convertToValues $ Map.toList users   -- Get the most optimal one
+                                                    if null schedule then return "no-possible-exam-schedule" else return ("ok { " ++ formatExams (map convertToExams schedule) ++ " }")
+                                            else do
+                                                return "wrong-login"
         })
 -- Invalid request - not part of the procoticol but it serves to let the client know there was an invalid request
 handleParsedRequest InvalidRequest s = return "invalid request"
@@ -560,7 +553,7 @@ getRequest::Parser Request
 getRequest =
     parseRequest
 
--- Testing code
+-- Testing code and example input for requests
 test1 :: Either ParseError Request
 test1 = parse getRequest "" "add-teacher admin@1234 walter"
 test2 :: Either ParseError Request
